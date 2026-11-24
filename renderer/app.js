@@ -521,6 +521,7 @@ async function compile() {
   status((errs ? `Compiled with ${errs} error(s)` : 'Compiled') + (r.ms ? ` in ${(r.ms / 1000).toFixed(1)} s` : '') + (r.engine ? ` (${r.engine === 'builtin' ? 'Datex TeX' : r.engine})` : ''));
   if (r.pdf && r.fresh !== false) { try { await loadPdf(r.pdf); } catch (e) { toast('Could not show PDF: ' + e.message, true); } }
   else if (!r.pdf) { $('#pdfView').innerHTML = '<div class="pdf-empty">No PDF was produced. Open Logs to see what went wrong.</div>'; $('#logs').classList.remove('hidden'); }
+  if (r.ok && r.pdf) api('project:config', S.root, {}).then(c => { if (c.wordAuto) exportWord(false, true); }).catch(() => {});
   if (compile.again) compile();
 }
 function setIssues(list) {
@@ -989,6 +990,29 @@ async function packagesDialog() {
   };
   c.querySelector('#pkCommon').onclick = async () => { show(); o.textContent = 'Starting...\n'; try { await api('tex:downloadAll'); } catch (e) { o.textContent += e.message; } };
 }
+// Word export: the same LaTeX project as an editable Word document, for readers who do not use LaTeX.
+async function exportWord(pick, quiet) {
+  if (!S.root) return;
+  await saveAll();
+  const btn = $('#wordBtn'); btn.disabled = true; btn.innerHTML = '<b>W</b> Making...';
+  try {
+    const r = await api('word:export', S.root, S.main, !!pick);
+    if (!r) return;
+    if (quiet) { status('Word file updated: ' + r.file.split(/[\\/]/).pop()); return; }
+    const cfg = await api('project:config', S.root, {});
+    const c = modal(`<h2>Word document ready</h2>
+      <p>Your LaTeX project is now also a Word file that anyone can open and edit, no LaTeX needed. Headings, lists, tables, figures, equations (as editable Word equations), citations and the reference list are kept.</p>
+      <div class="card mono small">${esc(r.file)}</div>
+      ${r.warnings.length ? `<details style="margin-top:8px"><summary class="muted small">${r.warnings.length} note(s) about parts Word cannot show</summary><div class="mono small muted">${r.warnings.map(esc).join('<br>')}</div></details>` : ''}
+      <label style="margin-top:12px"><input type="checkbox" id="wdAuto" ${cfg.wordAuto ? 'checked' : ''}> Update this Word file automatically after every compile</label>
+      <div class="modal-actions"><button class="btn ghost" id="wdFolder">Show in folder</button><button class="btn ghost" id="wdClose">Close</button><button class="btn primary" id="wdOpen">Open in Word</button></div>`);
+    c.querySelector('#wdAuto').onchange = e => api('project:config', S.root, { wordAuto: e.target.checked });
+    c.querySelector('#wdOpen').onclick = () => { api('file:open', r.file).catch(e => toast(e.message, true)); closeModal(); };
+    c.querySelector('#wdFolder').onclick = () => api('file:reveal', r.file);
+    c.querySelector('#wdClose').onclick = closeModal;
+  } catch (e) { quiet ? status('Word update failed: ' + e.message) : toast(e.message, true); }
+  finally { btn.disabled = false; btn.innerHTML = '<b>W</b> Word'; }
+}
 async function aboutDialog() {
   const info = await api('app:info');
   const c = modal(`<div class="about"><img src="assets/datex-icon.png" class="app-logo xl" alt=""><h2 style="margin:10px 0 2px">Datex</h2><div class="muted">Version ${esc(info.version)}</div>
@@ -1012,7 +1036,7 @@ $x^2 + y_1$               Inline math
 
 // ---------------- Commands & wiring ----------------
 const CMDS = {
-  newProject, joinSession: () => live.joinDialog(), packages: () => packagesDialog(), cloneRepo: () => cloneRepo(), openProject: openFolder, dashboard: showDashboard, settings: settingsDialog, about: aboutDialog, guide: guideDialog,
+  newProject, exportWord: () => exportWord(false), exportWordAs: () => exportWord(true), joinSession: () => live.joinDialog(), packages: () => packagesDialog(), cloneRepo: () => cloneRepo(), openProject: openFolder, dashboard: showDashboard, settings: settingsDialog, about: aboutDialog, guide: guideDialog,
   save: () => saveAll().then(() => toast('Saved')), compile: () => compile(),
   stop: () => api('compile:stop', S.root), clean: async () => { await api('compile:clean', S.root); toast('Build files cleared'); },
   syncForward, zoomIn: () => zoomStep(1), zoomOut: () => zoomStep(-1),
@@ -1022,7 +1046,7 @@ const CMDS = {
   review: () => openPanel('review'), comments: () => openPanel('comments'), history: () => openPanel('history'), refs: () => openPanel('refs'),
   ai: () => openPanel('ai'), symbols: () => openPanel('symbols'), git: () => openPanel('git'), search: () => openPanel('search'), wordcount: wordCountDialog
 };
-const needsProject = new Set(['save', 'compile', 'stop', 'clean', 'syncForward', 'exportPdf', 'exportZip', 'review', 'comments', 'history', 'refs', 'ai', 'symbols', 'git', 'search', 'wordcount', 'newFile', 'newFolder', 'upload']);
+const needsProject = new Set(['exportWord', 'exportWordAs', 'save', 'compile', 'stop', 'clean', 'syncForward', 'exportPdf', 'exportZip', 'review', 'comments', 'history', 'refs', 'ai', 'symbols', 'git', 'search', 'wordcount', 'newFile', 'newFolder', 'upload']);
 function runCmd(c) { if (needsProject.has(c) && !S.root) return toast('Open a project first'); CMDS[c] && CMDS[c](); }
 
 function wire() {

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<style xmlns="http://purl.org/net/xbiblio/csl" class="in-text" version="1.0" demote-non-dropping-particle="sort-only">
+  <info>
+    <title>Datex numeric</title>
+    <id>datex-numeric</id>
+    <author><name>Datix AI</name></author>
+    <updated>2026-11-24T00:00:00+00:00</updated>
+  </info>
+  <macro name="author">
+    <names variable="author">
+      <name initialize-with=". " delimiter=", " and="text" delimiter-precedes-last="never"/>
+      <substitute><names variable="editor"/><text variable="publisher"/></substitute>
+    </names>
+  </macro>
+  <macro name="year"><date variable="issued"><date-part name="year"/></date></macro>
+  <citation collapse="citation-number">
+    <sort><key variable="citation-number"/></sort>
+    <layout prefix="[" suffix="]" delimiter=", "><text variable="citation-number"/></layout>
+  </citation>
+  <bibliography entry-spacing="0" second-field-align="flush">
+    <layout suffix=".">
+      <text variable="citation-number" prefix="[" suffix="] "/>
+      <group delimiter=", ">
+        <text macro="author"/>
+        <choose>
+          <if type="book"><text variable="title" font-style="italic"/></if>
+          <else><text variable="title" quotes="true"/></else>
+        </choose>
+        <text variable="container-title" font-style="italic"/>
+        <group delimiter=" "><text term="volume" form="short"/><text variable="volume"/></group>
+        <group delimiter=" "><text term="issue" form="short"/><text variable="issue"/></group>
+        <group delimiter=" "><label variable="page" form="short"/><text variable="page"/></group>
+        <text variable="edition"/>
+        <text variable="publisher"/>
+        <text macro="year"/>
+        <text variable="URL"/>
+      </group>
+    </layout>
+  </bibliography>
+</style>

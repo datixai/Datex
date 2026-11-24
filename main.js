@@ -105,6 +105,8 @@ function buildMenu() {
       { type: 'separator' },
       { label: 'Save', accelerator: 'Ctrl+S', click: cmd('save') },
       { label: 'Export PDF...', accelerator: 'Ctrl+Shift+E', click: cmd('exportPdf') },
+      { label: 'Export Word Document (.docx)', accelerator: 'Ctrl+Shift+W', click: cmd('exportWord') },
+      { label: 'Export Word Document As...', click: cmd('exportWordAs') },
       { label: 'Export Project as ZIP...', click: cmd('exportZip') },
       { type: 'separator' },
       { label: 'Settings', accelerator: 'Ctrl+,', click: cmd('settings') },
@@ -594,6 +596,76 @@ handle('tex:install', async (names) => {
   }
   return list;
 });
+
+// ---------- Word export (LaTeX to .docx with Pandoc) ----------
+const pandocExe = () => path.join(resDir(), 'bin', 'pandoc', 'pandoc.exe');
+// Pandoc runs outside Electron and cannot read inside app.asar, so copy its support files out first.
+async function wordSupport() {
+  const dst = path.join(app.getPath('userData'), 'word');
+  await fsp.mkdir(dst, { recursive: true });
+  for (const f of ['reference.docx', 'datex.lua', 'numeric.csl']) await fsp.copyFile(path.join(APP_DIR, 'templates', 'word', f), path.join(dst, f));
+  return dst;
+}
+async function exportWord(root, main, outFile) {
+  if (!fs.existsSync(pandocExe())) throw new Error('The Word converter is missing. Reinstall Datex.');
+  const sup = await wordSupport();
+  // Merge \input and \include files into one source, so every chapter reaches Word.
+  const flatten = async (rel, depth) => {
+    let text = await fsp.readFile(inside(root, rel), 'utf8');
+    if (depth > 10) return text;
+    const parts = []; let last = 0;
+    for (const m of text.matchAll(/^([^%\n]*?)\\(input|include|subfile)\{([^}]+)\}/gm)) {
+      let f = m[3].trim(); if (!/\.tex$/i.test(f)) f += '.tex';
+      if (!fs.existsSync(path.join(root, f))) continue;
+      const start = m.index + m[1].length;
+      parts.push(text.slice(last, start), (m[2] === 'include' ? '\n\\clearpage\n' : '\n') + await flatten(f, depth + 1) + '\n');
+      last = m.index + m[0].length;
+    }
+    parts.push(text.slice(last));
+    return parts.join('');
+  };
+  const src = await flatten(main, 0);
+  const flat = path.join('.datex', 'word-source.tex');
+  await fsp.mkdir(path.join(root, '.datex'), { recursive: true });
+  await fsp.writeFile(path.join(root, flat), src, 'utf8');
+  const body = src.replace(/(^|[^\\])%.*$/gm, '$1');
+  const args = [flat, '-f', 'latex+raw_tex', '-t', 'docx', '-o', outFile,
+    '--reference-doc', path.join(sup, 'reference.docx'), '--lua-filter', path.join(sup, 'datex.lua'),
+    '--resource-path', root, '--number-sections'];
+  // Report and book classes start each chapter on a new page; the filter copies that.
+  if (/\\documentclass(\[[^\]]*\])?\{(report|book|memoir|scrreprt|scrbook)\}/.test(body)) args.push('-M', 'datex-chapters=true');
+  // Bibliography: the files the document names, else every .bib in the project when it cites anything.
+  let bibs = [];
+  for (const m of body.matchAll(/\\(?:bibliography|addbibresource)(?:\[[^\]]*\])?\{([^}]+)\}/g)) {
+    for (const b of m[1].split(',')) { const f = b.trim().replace(/\.bib$/i, '') + '.bib'; if (fs.existsSync(path.join(root, f))) bibs.push(f); }
+  }
+  if (!bibs.length && /\\cite/.test(src)) bibs = (await projectBib(root)).map(e => e.file).filter((f, i, a) => a.indexOf(f) === i);
+  if (bibs.length) {
+    // Citations are resolved before the Datex filter runs, so the filter also sees the reference list.
+    const cite = ['--citeproc', '-M', 'reference-section-title=' + (/datex-chapters/.test(args.join(' ')) ? 'Bibliography' : 'References')];
+    for (const b of [...new Set(bibs)]) cite.push('--bibliography', b);
+    // Numbered citation styles in LaTeX get numbered citations in Word too.
+    if (/\\bibliographystyle\{(plain|unsrt|ieeetr|IEEEtran|abbrv|alpha|acm|siam|vancouver)\}|style\s*=\s*(numeric|ieee)/i.test(body)) cite.push('--csl', path.join(sup, 'numeric.csl'));
+    args.splice(args.indexOf('--lua-filter'), 0, ...cite);
+  }
+  const r = await new Promise(res => execFile(pandocExe(), args, { cwd: root, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, so, se) => res({ ok: !err, err: String(se || (err && err.message) || '') })));
+  if (!r.ok) {
+    if (/permission denied|resource busy|being used/i.test(r.err)) throw new Error('The Word file is open in another program. Close it in Word and try again.');
+    throw new Error(r.err.split('\n').filter(Boolean).slice(-2).join(' ') || 'Word export failed');
+  }
+  const warnings = r.err.split('\n').filter(l => /WARNING/.test(l)).map(l => l.replace(/^\[WARNING\]\s*/, '')).slice(0, 20);
+  return { file: outFile, warnings };
+}
+handle('word:export', async (root, main, pick) => {
+  let out = path.join(root, path.basename(root) + '.docx');
+  if (pick) {
+    const r = await dialog.showSaveDialog(win, { defaultPath: out, filters: [{ name: 'Word document', extensions: ['docx'] }] });
+    if (r.canceled) return null; out = r.filePath;
+  }
+  return exportWord(root, main, out);
+});
+handle('file:open', async (f) => { const e = await shell.openPath(f); if (e) throw new Error(e); });
+handle('file:reveal', async (f) => shell.showItemInFolder(f));
 
 // ---------- GitHub clone and cloud backup ----------
 handle('repo:clone', async (url) => {

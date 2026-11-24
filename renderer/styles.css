@@ -232,3 +232,9 @@ input:focus,select:focus,textarea:focus{border-color:var(--text)}
 .tree .node,.outline .node{filter:grayscale(1)}
 .credit-link,.credit-big{text-decoration:none}
 body.light .dash-head{color:var(--text)}
+
+.word-btn b{display:inline-grid;place-items:center;width:16px;height:16px;border:1.5px solid currentColor;border-radius:3px;font-size:10px;margin-right:3px}
+.topbar .btn,.topbar .tool-btn{white-space:nowrap}
+.topbar .btn{padding:6px 12px}
+.proj-name{max-width:200px}
+.topbar .tb-label select{max-width:130px}

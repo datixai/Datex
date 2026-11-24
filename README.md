@@ -12,6 +12,7 @@ Developed by **Datix AI** · [datixai.com](https://datixai.com)
 | TeX engine (MiKTeX style) | Built-in engine (Tectonic) ships in the installer, so nothing else is needed. Common packages come pre-cached; any other package downloads automatically the first time it is used. Uses MiKTeX or TeX Live through latexmk for pdfLaTeX, XeLaTeX or LuaLaTeX if one is installed |
 | PDF viewer (WinEdt PDF style) | Built-in viewer, zoom, fit width, page counter, export. SyncTeX both ways: double-click the PDF to jump to the source, Ctrl+Alt+J to jump from the source to the PDF |
 | Overleaf paid-tier features | Auto compile while typing, no compile time limit, full project history with labelled versions, compare and restore, track changes (accept or reject each change), comments with replies and resolve, Git and GitHub sync, Zotero import, add references by DOI, advanced reference search, symbol palette, templates |
+| Word export | One click turns the LaTeX project into an editable Word document (.docx) for people who do not use LaTeX: cover, contents, chapters on new pages, numbered figures and tables, working cross references, editable Word equations, citations and the reference list, with a Page X of Y footer. Can update the Word file after every compile. Uses the bundled Pandoc |
 | Live co-editing | Share button starts a session on the office network; others join with the address and code. Everyone edits the same files at once with coloured cursors, presence and synced comments, and each PC compiles its own PDF |
 | AI (local) | Fix compile errors, improve writing, fix grammar, shorten, explain, make tables, equations and TikZ diagrams, draft an abstract, suggest titles, translate. Runs with local Ollama models, so documents never leave the PC |
 
@@ -39,7 +40,8 @@ This runs the tests, downloads the Tectonic engine into `bin/`, pre-fills `tex-c
 - `lib/`: LaTeX log parser, BibTeX reader, SyncTeX reader (tested in `tests/`)
 - `renderer/`: the window (`index.html`, `styles.css`, `app.js`, `data.js`)
 - `templates/`: new project templates
-- `tools/`: engine download and package cache scripts
+- `templates/word/`: Word export template, filter and numbered citation style
+- `tools/`: engine and Pandoc download, package cache and Word template scripts
 
 Each project is a normal folder. Datex keeps its build output in `.datex/build`, comments in `.datex/comments.json` and history in the project's own Git repository.
 
