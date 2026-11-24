@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' app:; script-src 'self' app:; style-src 'self' app: 'unsafe-inline'; img-src 'self' app: data: blob:; font-src 'self' app: data:; worker-src 'self' app: blob:; connect-src 'self' app:">
+<title>Datex</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body class="dark">
+
+<!-- Dashboard -->
+<section id="dashboard" class="view">
+  <header class="dash-head">
+    <div class="brand"><span class="logo-mark">D<span>x</span></span><div><h1>Datex</h1><p>Professional LaTeX writing studio</p></div></div>
+    <div class="dash-actions">
+      <button class="btn primary" data-cmd="newProject">+ New Project</button>
+      <button class="btn" data-cmd="openProject">Open Folder</button>
+      <button class="btn ghost" data-cmd="settings">Settings</button>
+    </div>
+  </header>
+  <div id="texWarning" class="notice hidden"></div>
+  <div class="dash-body">
+    <div class="dash-search"><input id="projSearch" placeholder="Search projects..."></div>
+    <table class="proj-table"><thead><tr><th>Project</th><th>Location</th><th>Last modified</th><th></th></tr></thead><tbody id="projList"></tbody></table>
+    <div id="projEmpty" class="empty hidden">No projects yet. Create your first one from a template.</div>
+  </div>
+  <footer class="credit"><img src="assets/datix-logo.png" alt=""> Developed by Datix AI · <a href="#" data-link="https://datixai.com">datixai.com</a></footer>
+</section>
+
+<!-- Editor -->
+<section id="editorView" class="view hidden">
+  <header class="topbar">
+    <button class="icon-btn" data-cmd="dashboard" title="All projects">&#8962;</button>
+    <span class="logo-mark sm">D<span>x</span></span>
+    <strong id="projName" class="proj-name"></strong>
+    <div class="spacer"></div>
+    <label class="tb-label">Main <select id="mainSel"></select></label>
+    <label class="tb-label">Engine <select id="engineSel"><option value="auto">Auto</option><option value="builtin">Built-in (Datex TeX)</option><option value="pdflatex">pdfLaTeX</option><option value="xelatex">XeLaTeX</option><option value="lualatex">LuaLaTeX</option></select></label>
+    <div class="compile-group">
+      <button id="compileBtn" class="btn primary" data-cmd="compile">&#9654; Recompile</button>
+      <label class="auto" title="Compile automatically after you stop typing"><input type="checkbox" id="autoChk"> Auto</label>
+    </div>
+    <div class="spacer"></div>
+    <button class="tool-btn" data-panel="review" title="Track changes">Review</button>
+    <button class="tool-btn" data-panel="comments" title="Comments">Comments</button>
+    <button class="tool-btn" data-panel="history" title="History">History</button>
+    <button class="tool-btn" data-panel="refs" title="References">References</button>
+    <button class="tool-btn ai" data-panel="ai" title="AI assistant">AI</button>
+    <button class="tool-btn" data-panel="symbols" title="Symbol palette">&Sigma;</button>
+    <button class="tool-btn" data-panel="search" title="Search project">Search</button>
+    <button class="tool-btn" data-panel="git" title="Git and GitHub sync">Git</button>
+    <button class="icon-btn" data-cmd="settings" title="Settings">&#9881;</button>
+  </header>
+
+  <div class="workspace" id="workspace">
+    <aside class="sidebar" id="sidebar">
+      <div class="side-tools">
+        <span>Files</span>
+        <div>
+          <button class="icon-btn" data-cmd="newFile" title="New file">+&#128196;</button>
+          <button class="icon-btn" data-cmd="newFolder" title="New folder">+&#128193;</button>
+          <button class="icon-btn" data-cmd="upload" title="Upload">&#8679;</button>
+          <button class="icon-btn" data-cmd="refreshTree" title="Refresh">&#8635;</button>
+        </div>
+      </div>
+      <div id="tree" class="tree"></div>
+      <div class="side-tools"><span>Outline</span></div>
+      <div id="outline" class="outline"></div>
+    </aside>
+    <div class="gutter" data-resize="sidebar"></div>
+
+    <main class="editor-pane">
+      <div id="tabs" class="tabs"></div>
+      <div id="editor" class="editor"></div>
+      <div id="imageView" class="image-view hidden"></div>
+      <div class="statusbar"><span id="status">Ready</span><span class="spacer"></span><span id="cursorPos"></span><span id="wordCount"></span></div>
+    </main>
+    <div class="gutter" data-resize="pdfPane"></div>
+
+    <section class="pdf-pane" id="pdfPane">
+      <div class="pdf-tools">
+        <button class="icon-btn" id="logsBtn" title="Logs and errors">Logs <b id="issueCount"></b></button>
+        <div class="spacer"></div>
+        <button class="icon-btn" data-cmd="syncForward" title="Jump from code to PDF">&#8680; PDF</button>
+        <button class="icon-btn" data-cmd="zoomOut">&minus;</button>
+        <select id="zoomSel"><option value="fit">Fit width</option><option value="0.75">75%</option><option value="1">100%</option><option value="1.25">125%</option><option value="1.5">150%</option><option value="2">200%</option></select>
+        <button class="icon-btn" data-cmd="zoomIn">+</button>
+        <span id="pageInfo" class="page-info"></span>
+        <button class="icon-btn" data-cmd="exportPdf" title="Download PDF">&#8681;</button>
+      </div>
+      <div id="pdfView" class="pdf-view"><div class="pdf-empty">Compile to see your PDF here.<br><small>Double-click the PDF to jump to the source.</small></div></div>
+      <div id="logs" class="logs hidden">
+        <div class="logs-head"><span>Errors and warnings</span><div><button class="btn ghost sm" id="rawLogBtn">Raw log</button><button class="btn ai sm" id="aiFixBtn">Ask AI to fix</button></div></div>
+        <div id="issues"></div>
+        <pre id="rawLog" class="hidden"></pre>
+      </div>
+    </section>
+
+    <aside class="drawer hidden" id="drawer">
+      <div class="drawer-head"><strong id="drawerTitle"></strong><button class="icon-btn" id="drawerClose">&times;</button></div>
+      <div id="drawerBody" class="drawer-body"></div>
+    </aside>
+  </div>
+</section>
+
+<div id="modal" class="modal hidden"><div class="modal-card" id="modalCard"></div></div>
+<div id="toast" class="toast hidden"></div>
+
+<script src="../node_modules/monaco-editor/min/vs/loader.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

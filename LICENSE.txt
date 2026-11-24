@@ -1,0 +1,16 @@
+Datex
+Copyright (c) 2026 Datix AI. All rights reserved.
+https://datixai.com
+
+This software is licensed, not sold. You may install and use Datex on your own computers.
+You may not resell, redistribute or reverse engineer Datex except where the law allows it.
+
+Datex is provided "as is", without warranty of any kind. Datix AI is not liable for any loss of data
+or other damage arising from the use of this software. Keep backups of important documents.
+
+Third-party components included in Datex, each under its own license:
+- Electron (MIT)
+- Monaco Editor (MIT)
+- PDF.js (Apache License 2.0)
+- Tectonic TeX engine (MIT) and the TeX Live packages it downloads (various free licenses)
+- nspell (MIT) and the Hunspell English dictionaries (permissive licenses, see their packages)

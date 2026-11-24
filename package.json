@@ -1,0 +1,80 @@
+{
+  "name": "datex",
+  "productName": "Datex",
+  "version": "0.1.0",
+  "description": "Datex: a professional LaTeX editor for Windows. Developed by Datix AI (datixai.com)",
+  "main": "main.js",
+  "author": "Datix AI",
+  "homepage": "https://datixai.com",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test tests/",
+    "engine": "node tools/fetch-engine.js",
+    "warm": "node tools/warm-cache.js",
+    "dist": "npm test && node tools/fetch-engine.js && node tools/warm-cache.js && electron-builder --win nsis --x64 --publish never"
+  },
+  "build": {
+    "appId": "ai.datix.datex",
+    "productName": "Datex",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**",
+      "renderer/**",
+      "templates/**",
+      "build/icon.png",
+      "build/icon.ico",
+      "node_modules/**"
+    ],
+    "fileAssociations": [
+      {
+        "ext": "tex",
+        "name": "LaTeX document",
+        "role": "Editor"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico",
+      "publisherName": "Datix AI"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Datex",
+      "perMachine": false,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "license": "LICENSE.txt"
+    },
+    "extraResources": [
+      {
+        "from": "bin",
+        "to": "bin"
+      },
+      {
+        "from": "tex-cache",
+        "to": "tex-cache"
+      }
+    ],
+    "copyright": "Copyright (c) 2026 Datix AI"
+  },
+  "devDependencies": {
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0"
+  },
+  "dependencies": {
+    "dictionary-en": "^4.0.0",
+    "dictionary-en-gb": "^3.0.0",
+    "monaco-editor": "^0.52.2",
+    "nspell": "^2.1.5",
+    "pdfjs-dist": "^4.10.38"
+  }
+}

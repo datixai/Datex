@@ -1,0 +1,48 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,graphicx,booktabs}
+\usepackage[hidelinks]{hyperref}
+
+\title{Your Paper Title}
+\author{Author Name\\ \small Affiliation}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A short summary of the problem, the method and the main result.
+\end{abstract}
+
+\section{Introduction}
+Introduce the topic and cite earlier work \cite{knuth1984}.
+
+\section{Method}
+The main relation is given in Equation~\eqref{eq:main}.
+\begin{equation}
+  E = mc^2
+  \label{eq:main}
+\end{equation}
+
+\section{Results}
+Table~\ref{tab:results} shows an example.
+\begin{table}[htbp]
+  \centering
+  \caption{Example results.}
+  \label{tab:results}
+  \begin{tabular}{lcc}
+    \toprule
+    Method & Accuracy & Time (s) \\
+    \midrule
+    Baseline & 0.81 & 12 \\
+    Ours & 0.89 & 9 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{Conclusion}
+Summarise the findings.
+
+\bibliographystyle{plain}
+\bibliography{references}
+\end{document}
