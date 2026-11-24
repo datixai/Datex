@@ -3,3 +3,4 @@ dist/
 bin/
 tex-cache/
 *.log
+docs/Datex-Documentation/
