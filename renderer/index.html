@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self' app:; script-src 'self' app:; style-src 'self' app: 'unsafe-inline'; img-src 'self' app: data: blob:; font-src 'self' app: data:; worker-src 'self' app: blob:; connect-src 'self' app:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' app:; script-src 'self' app:; style-src 'self' app: 'unsafe-inline'; img-src 'self' app: data: blob:; font-src 'self' app: data:; worker-src 'self' app: blob:; connect-src 'self' app: ws:">
 <title>Datex</title>
 <link rel="stylesheet" href="styles.css">
 </head>
@@ -15,6 +15,7 @@
     <div class="dash-actions">
       <button class="btn primary" data-cmd="newProject">+ New Project</button>
       <button class="btn" data-cmd="openProject">Open Folder</button>
+      <button class="btn" data-cmd="joinSession">Join Live Session</button>
       <button class="btn ghost" data-cmd="settings">Settings</button>
     </div>
   </header>
@@ -49,6 +50,8 @@
     <button class="tool-btn" data-panel="symbols" title="Symbol palette">&Sigma;</button>
     <button class="tool-btn" data-panel="search" title="Search project">Search</button>
     <button class="tool-btn" data-panel="git" title="Git and GitHub sync">Git</button>
+    <span id="peerDots" class="peer-dots"></span>
+    <button class="tool-btn share" data-panel="share" title="Live co-editing">Share</button>
     <button class="icon-btn" data-cmd="settings" title="Settings">&#9881;</button>
   </header>
 

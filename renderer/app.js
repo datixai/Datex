@@ -1,6 +1,7 @@
 // Datex renderer. Developed by Datix AI (datixai.com).
 import * as pdfjsLib from '../node_modules/pdfjs-dist/build/pdf.mjs';
 import { LATEX_COMMANDS, ENVIRONMENTS, SYMBOLS, AI_ACTIONS } from './data.js';
+import * as live from './live.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('../node_modules/pdfjs-dist/build/pdf.worker.mjs', import.meta.url).href;
 
@@ -240,6 +241,7 @@ function hasPackage(p) { const f = S.files.get(S.main); return f ? new RegExp('\
 
 // ---------------- Dashboard ----------------
 async function showDashboard() {
+  await live.end();
   if (S.root) await leaveProject();
   $('#editorView').classList.add('hidden'); $('#dashboard').classList.remove('hidden');
   document.title = 'Datex';
@@ -344,7 +346,9 @@ async function newFile(dir = '') {
   const name = await promptModal('New file', 'File name (for example chapter1.tex)', 'chapter.tex'); if (!name) return;
   const rel = (dir ? dir + '/' : '') + name;
   if (allFiles().includes(rel)) return toast('That file already exists', true);
-  await api('fs:write', S.root, rel, /\.tex$/i.test(name) ? '% ' + name + '\n\n' : '');
+  const init = /\.tex$/i.test(name) ? '% ' + name + '\n\n' : '';
+  await api('fs:write', S.root, rel, init);
+  live.fileCreated(rel, init);
   if (dir) openDirs.add(dir);
   await refreshTree(); openFile(rel);
 }
@@ -353,6 +357,7 @@ async function renameNode(p) {
   const name = await promptModal('Rename', 'New name', p.split('/').pop()); if (!name) return;
   const np = p.split('/').slice(0, -1).concat(name).join('/');
   await saveAll(); await api('fs:rename', S.root, p, np);
+  if (live.isActive() && TEXT_EXT.test(np)) live.fileRenamed(p, np, await api('fs:read', S.root, np));
   const f = S.files.get(p); if (f) { f.model.dispose(); S.files.delete(p); }
   if (S.main === p) await setMain(np);
   await refreshTree(); if (S.active === p) openFile(np);
@@ -360,9 +365,10 @@ async function renameNode(p) {
 async function deleteNode(p) {
   if (!await confirmModal('Delete', `Move "${p}" to the Recycle Bin?`, 'Delete', true)) return;
   await api('fs:trash', S.root, p);
+  live.fileDeleted(p);
   closeTab(p, true); refreshTree();
 }
-async function upload() { const r = await api('fs:upload', S.root, ''); if (r.length) { toast('Uploaded ' + r.length + ' file(s)'); refreshTree(); } }
+async function upload() { const r = await api('fs:upload', S.root, ''); if (r.length) { toast('Uploaded ' + r.length + ' file(s)'); await refreshTree(); live.uploaded(r); } }
 
 // ---------------- Files & tabs ----------------
 async function openFile(rel, line) {
@@ -378,6 +384,7 @@ async function openFile(rel, line) {
     const lang = /\.(tex|sty|cls|ltx)$/i.test(rel) ? 'latex' : /\.bib$/i.test(rel) ? 'bibtex' : /\.md$/i.test(rel) ? 'markdown' : /\.py$/i.test(rel) ? 'python' : 'plaintext';
     const model = monaco.editor.createModel(text, lang, monaco.Uri.file('/' + rel));
     f = { model, dirty: false, open: true, view: null }; S.files.set(rel, f);
+    live.bindModel(rel, f);
   }
   f.open = true;
   if (S.active && S.files.get(S.active)) S.files.get(S.active).view = editor.saveViewState();
@@ -385,7 +392,7 @@ async function openFile(rel, line) {
   if (f.view) editor.restoreViewState(f.view);
   if (line) { editor.revealLineInCenter(line); editor.setPosition({ lineNumber: line, column: 1 }); }
   editor.focus();
-  renderTabs(); renderTree(); renderOutline(); applyIssueMarkers(); applyCommentDecorations(); liveStats(); spellCheck();
+  renderTabs(); renderTree(); renderOutline(); applyIssueMarkers(); applyCommentDecorations(); liveStats(); spellCheck(); live.rebindActive();
 }
 async function showImage(rel) {
   const bytes = await api('fs:readBinary', S.root + '\\' + rel.replace(/\//g, '\\'));
@@ -598,9 +605,10 @@ function openPanel(name) {
   document.querySelectorAll('.tool-btn').forEach(b => b.classList.toggle('active', b.dataset.panel === name));
   $('#drawer').classList.remove('hidden');
   const P = { review: ['Track changes', reviewPanel], comments: ['Comments', commentsPanel], history: ['History', historyPanel], refs: ['References', refsPanel],
-    ai: ['AI assistant', aiPanel], symbols: ['Symbol palette', symbolsPanel], search: ['Search project', searchPanel], git: ['Git and GitHub', gitPanel] }[name];
+    ai: ['AI assistant', aiPanel], share: ['Live session', live.sharePanel], symbols: ['Symbol palette', symbolsPanel], search: ['Search project', searchPanel], git: ['Git and GitHub', gitPanel] }[name];
   $('#drawerTitle').textContent = P[0]; $('#drawerBody').innerHTML = ''; P[1]($('#drawerBody'));
 }
+function refreshPanel(name) { if (S.panel === name && !$('#drawer').classList.contains('hidden')) { const P = { share: live.sharePanel, comments: commentsPanel }[name]; if (P) { $('#drawerBody').innerHTML = ''; P($('#drawerBody')); } } }
 function closePanel() { $('#drawer').classList.add('hidden'); S.panel = null; document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active')); }
 
 // Track changes: compare the working copy with the last saved version (snapshot); accept or reject each change.
@@ -680,7 +688,7 @@ function commentsPanel(el) {
     } else if (t.dataset.resolve) { const c = S.comments.find(c => c.id === t.dataset.resolve); c.resolved = !c.resolved; }
     else if (t.dataset.del) { S.comments = S.comments.filter(c => c.id !== t.dataset.del); }
     else { const cd = t.closest('.card'); if (cd) { const c = S.comments.find(x => x.id === cd.dataset.id); if (c) openFile(c.file, anchorLine(c)); } return; }
-    await api('comments:save', S.root, S.comments); draw(); applyCommentDecorations();
+    await api('comments:save', S.root, S.comments); draw(); applyCommentDecorations(); live.commentsChanged();
   };
 }
 function anchorLine(c) {
@@ -942,7 +950,7 @@ $x^2 + y_1$               Inline math
 
 // ---------------- Commands & wiring ----------------
 const CMDS = {
-  newProject, openProject: openFolder, dashboard: showDashboard, settings: settingsDialog, about: aboutDialog, guide: guideDialog,
+  newProject, joinSession: () => live.joinDialog(), openProject: openFolder, dashboard: showDashboard, settings: settingsDialog, about: aboutDialog, guide: guideDialog,
   save: () => saveAll().then(() => toast('Saved')), compile: () => compile(),
   stop: () => api('compile:stop', S.root), clean: async () => { await api('compile:clean', S.root); toast('Build files cleared'); },
   syncForward, zoomIn: () => zoomStep(1), zoomOut: () => zoomStep(-1),
@@ -997,11 +1005,12 @@ async function main() {
   applyTheme();
   monaco = await loadMonaco();
   setupLanguages(); createEditor(); buildFmtBar(); applyTheme(); wire();
+  live.initLive({ S, api, monaco, editor, toast, modal, closeModal, openProject, refreshTree, allFiles, saveAll, autosave, applyCommentDecorations, refreshPanel, TEXT_EXT, settings: () => settings });
   if (!tex.builtin && !tex.system) {
     const w = $('#texWarning'); w.classList.remove('hidden');
     w.innerHTML = 'No TeX engine was found. Reinstall Datex to restore the built-in engine, or install <a href="#" data-link="https://miktex.org/download">MiKTeX</a>.';
   }
   showDashboard();
 }
-window.__datex = { S, openProject, compile, openPanel, syncForward, newProject };
+window.__datex = { S, openProject, compile, openPanel, syncForward, newProject, live };
 main().catch(e => { document.body.innerHTML = '<pre style="padding:20px;color:#f88">Datex failed to start:\n' + esc(e.stack || e.message) + '</pre>'; });

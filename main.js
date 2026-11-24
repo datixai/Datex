@@ -14,9 +14,11 @@ const { parseBib } = require('./lib/bibtex');
 const synctex = require('./lib/synctex');
 
 const APP_DIR = __dirname;
+// Tests can run several isolated copies of the app side by side.
+if (process.env.DATEX_USERDATA) app.setPath('userData', process.env.DATEX_USERDATA);
 const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
 const DEFAULTS = {
-  projectsDir: path.join(app.getPath('documents'), 'Datex Projects'),
+  projectsDir: process.env.DATEX_USERDATA ? path.join(process.env.DATEX_USERDATA, 'Projects') : path.join(app.getPath('documents'), 'Datex Projects'),
   engine: 'auto', autoCompile: true, compileTimeout: 0,
   fontSize: 14, wordWrap: true, theme: 'dark', userName: 'Me', spellLang: 'en-GB',
   ollamaUrl: 'http://127.0.0.1:11434', aiModel: 'gpt-oss:20b',
@@ -78,6 +80,7 @@ function selfTest() {
     console.log('compile:', await js(`(async()=>{while(window.__datex.S.compiling) await new Promise(r=>setTimeout(r,500)); await window.__datex.compile(); while(window.__datex.S.compiling) await new Promise(r=>setTimeout(r,500));})().then(()=>JSON.stringify({status:document.querySelector('#status').textContent, pages:window.__datex.S.pages.length, issues:window.__datex.S.issues.filter(i=>i.level==='error').map(i=>i.message)}))`));
     await wait(2500);
     console.log('sync:', await js(`(async()=>{const S=window.__datex.S;return JSON.stringify(await window.datex.call('synctex:forward',S.root,S.main,S.main,30,1))})()`));
+    if (process.env.DATEX_SCRIPT) console.log('script:', await js(fs.readFileSync(process.env.DATEX_SCRIPT, 'utf8')));
     if (process.env.DATEX_PANEL) { await js(`window.__datex.openPanel(${JSON.stringify(process.env.DATEX_PANEL)})`); await wait(1500); }
     const img = await wc.capturePage();
     fs.writeFileSync(process.env.DATEX_SHOT || path.join(app.getPath('temp'), 'datex-shot.png'), img.toPNG());
@@ -483,7 +486,7 @@ handle('fs:upload', async (root, relDir) => {
   const r = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'], title: 'Upload files to project' });
   if (r.canceled) return [];
   for (const f of r.filePaths) await fsp.copyFile(f, inside(root, (relDir ? relDir + '/' : '') + path.basename(f)));
-  return r.filePaths.map(f => path.basename(f));
+  return r.filePaths.map(f => (relDir ? relDir + '/' : '') + path.basename(f));
 });
 handle('fs:search', async (root, q) => {
   const res = []; const needle = String(q).toLowerCase(); if (!needle) return res;
@@ -570,7 +573,24 @@ handle('spell:add', async (word) => {
   settings.dictionary = [...new Set([...(settings.dictionary || []), word])]; saveSettings();
   getSpeller().add(word); return true;
 });
-handle('shell:open',async (url) => { if (/^https?:\/\//.test(url)) await shell.openExternal(url); });
+// ---------- Live sessions (co-editing on the local network) ----------
+const { startRelay } = require('./lib/relay');
+let relay = null;
+handle('collab:host', async (root) => {
+  if (relay) await relay.close();
+  relay = await startRelay({ root });
+  return { port: relay.port, code: relay.code, addresses: relay.addresses };
+});
+handle('collab:stop', async () => { if (relay) { await relay.close(); relay = null; } });
+handle('collab:guestDir', async (name) => {
+  const safe = String(name || 'Shared project').replace(/[<>:"/\|?*]/g, '').trim() + ' (shared)';
+  const dir = path.join(settings.projectsDir, safe);
+  await fsp.mkdir(dir, { recursive: true });
+  return dir;
+});
+handle('fs:writeBase64', async (root, rel, b64) => { const f = inside(root, rel); await fsp.mkdir(path.dirname(f), { recursive: true }); await fsp.writeFile(f, Buffer.from(b64, 'base64')); });
+handle('fs:readBase64', async (root, rel) => (await fsp.readFile(inside(root, rel))).toString('base64'));
+handle('shell:open', async (url) => { if (/^https?:\/\//.test(url)) await shell.openExternal(url); });
 
 app.whenReady().then(() => {
   loadSettings();
@@ -583,4 +603,4 @@ app.whenReady().then(() => {
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
-app.on('window-all-closed', () => { for (const r of running.keys()) stopCompile(r); app.quit(); });
+app.on('window-all-closed', () => { if (relay) relay.close(); for (const r of running.keys()) stopCompile(r); app.quit(); });
