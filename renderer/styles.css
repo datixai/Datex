@@ -165,3 +165,17 @@ body.light .dash-head{color:#fff}
 .peer-dots{display:flex;gap:2px}
 .peer-dot{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;color:#fff;font-size:11px;font-weight:700;background:var(--accent)}
 .tool-btn.share{background:var(--accent2);border-color:var(--accent2);color:#06260f;font-weight:600}
+
+.app-logo{width:26px;height:26px;border-radius:7px;display:block}
+.app-logo.lg{width:52px;height:52px;border-radius:12px}
+.app-logo.xl{width:72px;height:72px;border-radius:16px;margin:0 auto}
+.wordmark{font-weight:700;font-size:15px;letter-spacing:.3px}
+.crumb{color:var(--muted);margin:0 2px}
+.credit-link{display:flex;align-items:center;gap:5px;color:var(--muted);font-size:11px;padding-left:10px;border-left:1px solid var(--line)}
+.credit-link img{height:12px;opacity:.85}
+body.light .credit-link img,body.light .credit-big img{filter:invert(1)}
+.credit-link:hover{color:var(--accent)}
+.credit-big{display:inline-flex;align-items:center;gap:10px;color:var(--text);padding:6px 14px;border:1px solid var(--line);border-radius:20px;background:var(--bg2)}
+.credit-big img{height:18px}
+.credit-big:hover{border-color:var(--accent)}
+.credit-url{color:var(--accent);padding-left:10px;border-left:1px solid var(--line)}

@@ -124,7 +124,9 @@ function buildMenu() {
       { label: 'AI Assistant', accelerator: 'Ctrl+Shift+A', click: cmd('ai') },
       { label: 'References', accelerator: 'Ctrl+Shift+B', click: cmd('refs') },
       { label: 'Symbol Palette', click: cmd('symbols') },
-      { label: 'Git Sync', click: cmd('git') }
+      { label: 'Git, GitHub and Cloud Backup', click: cmd('git') },
+      { label: 'Clone from GitHub...', click: cmd('cloneRepo') },
+      { label: 'TeX Packages...', click: cmd('packages') }
     ] },
     { label: 'View', submenu: [{ role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'resetZoom' }, { role: 'togglefullscreen' }] },
     { label: 'Help', submenu: [
@@ -523,7 +525,12 @@ handle('project:zip', async (root) => {
 });
 handle('synctex:forward', syncForward);
 handle('synctex:backward', syncBackward);
-handle('history:snapshot', snapshot);
+handle('history:snapshot', async (root, message) => {
+  const r = await snapshot(root, message);
+  const cfg = await projectConfig(root);
+  if (r.changed && cfg.cloud && cfg.cloudAuto !== false && fs.existsSync(cfg.cloud)) { try { await cloudBackup(root, cfg.cloud); } catch {} }
+  return r;
+});
 handle('history:list', historyList);
 handle('history:files', historyFiles);
 handle('history:fileAt', fileAt);
@@ -553,6 +560,68 @@ handle('refs:zotero', async () => parseBib(await zoteroLibrary()));
 handle('ai:models', aiModels);
 handle('ai:chat', async (id, messages, model) => { aiChat(id, messages, model); return id; });
 handle('ai:stop', async (id) => { const c = aiJobs.get(id); if (c) c.abort(); });
+// ---------- TeX packages ----------
+function dirSize(p) { let n = 0; try { for (const e of fs.readdirSync(p, { withFileTypes: true })) n += e.isDirectory() ? dirSize(path.join(p, e.name)) : fs.statSync(path.join(p, e.name)).size; } catch {} return n; }
+handle('tex:info', async () => {
+  await seedTexCache();
+  const t = await texStatus();
+  return { ...t, cacheDir: texCacheDir(), cacheMB: Math.round(dirSize(texCacheDir()) / 1e6) };
+});
+// Install packages by name: the built-in engine fetches whatever a tiny document needs.
+handle('tex:install', async (names) => {
+  const list = String(names).split(/[\s,]+/).map(s => s.trim()).filter(n => /^[A-Za-z0-9-]+$/.test(n));
+  if (!list.length) throw new Error('Enter one or more package names, for example: tikz, siunitx');
+  if (!fs.existsSync(tectonicExe())) throw new Error('The built-in engine is missing. Reinstall Datex.');
+  await seedTexCache();
+  const tmp = path.join(app.getPath('temp'), 'datex-pkg-' + Date.now());
+  await fsp.mkdir(tmp, { recursive: true });
+  await fsp.writeFile(path.join(tmp, 'p.tex'), `\\documentclass{article}\n\\usepackage{${list.join(',')}}\n\\begin{document}\nok\n\\end{document}\n`);
+  const r = await new Promise(res => {
+    const c = spawn(tectonicExe(), ['-X', 'compile', 'p.tex'], { cwd: tmp, windowsHide: true, env: { ...process.env, TECTONIC_CACHE_DIR: texCacheDir() } });
+    let out = '';
+    const on = d => { out += d; send('tex:progress', String(d)); };
+    c.stdout.on('data', on); c.stderr.on('data', on);
+    c.on('close', code => res({ code, out }));
+  });
+  await fsp.rm(tmp, { recursive: true, force: true });
+  if (r.code !== 0) {
+    const missing = (r.out.match(/File `([^']+)' not found|unable to locate file "([^"]+)"/) || []);
+    throw new Error('Could not install: ' + (missing[1] || missing[2] || 'see the log above'));
+  }
+  return list;
+});
+
+// ---------- GitHub clone and cloud backup ----------
+handle('repo:clone', async (url) => {
+  url = String(url || '').trim();
+  if (!/^(https:\/\/|git@)[\w.@:/~-]+$/.test(url)) throw new Error('Enter a Git URL, for example https://github.com/user/paper.git');
+  const name = url.split(/[/:]/).pop().replace(/\.git$/, '') || 'project';
+  let dir = path.join(settings.projectsDir, name), i = 2;
+  while (fs.existsSync(dir)) dir = path.join(settings.projectsDir, name + ' ' + i++);
+  await fsp.mkdir(settings.projectsDir, { recursive: true });
+  const r = await run('git', ['clone', url, dir]);
+  if (!r.ok) throw new Error(r.stderr.split('\n').filter(Boolean).pop() || 'Clone failed');
+  return dir;
+});
+function cloudFolders() {
+  const out = []; const add = (name, p) => { if (p && fs.existsSync(p) && !out.some(o => o.path === p)) out.push({ name, path: p }); };
+  for (const l of 'DEFGHIJKLMNOPQRSTUVWXYZ') add('Google Drive', l + ':\\My Drive');
+  add('Google Drive', path.join(app.getPath('home'), 'Google Drive'));
+  add('Google Drive', path.join(app.getPath('home'), 'My Drive'));
+  add('OneDrive', process.env.OneDrive); add('OneDrive (work)', process.env.OneDriveCommercial);
+  add('Dropbox', path.join(app.getPath('home'), 'Dropbox'));
+  return out;
+}
+async function cloudBackup(root, target) {
+  const dst = path.join(target, 'Datex Backups', path.basename(root));
+  const skip = p => { const r = path.relative(root, p); return r === '.git' || r.startsWith('.git' + path.sep) || r.startsWith(path.join('.datex', 'build')); };
+  await fsp.cp(root, dst, { recursive: true, force: true, filter: src => !skip(src) });
+  return dst;
+}
+handle('cloud:detect', async () => cloudFolders());
+handle('cloud:pick', async () => { const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: 'Choose your cloud folder (Google Drive, OneDrive, Dropbox)' }); return r.canceled ? null : r.filePaths[0]; });
+handle('cloud:backup', cloudBackup);
+
 // Spell checking (English), with a personal dictionary kept in settings.
 let speller = null;
 function getSpeller() {

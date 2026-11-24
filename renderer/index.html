@@ -11,11 +11,13 @@
 <!-- Dashboard -->
 <section id="dashboard" class="view">
   <header class="dash-head">
-    <div class="brand"><span class="logo-mark">D<span>x</span></span><div><h1>Datex</h1><p>Professional LaTeX writing studio</p></div></div>
+    <div class="brand"><img src="assets/datex-icon.png" class="app-logo lg" alt=""><div><h1>Datex</h1><p>Professional LaTeX writing studio</p></div></div>
     <div class="dash-actions">
       <button class="btn primary" data-cmd="newProject">+ New Project</button>
       <button class="btn" data-cmd="openProject">Open Folder</button>
       <button class="btn" data-cmd="joinSession">Join Live Session</button>
+      <button class="btn" data-cmd="cloneRepo">Clone from GitHub</button>
+      <button class="btn ghost" data-cmd="packages">TeX Packages</button>
       <button class="btn ghost" data-cmd="settings">Settings</button>
     </div>
   </header>
@@ -25,14 +27,16 @@
     <table class="proj-table"><thead><tr><th>Project</th><th>Location</th><th>Last modified</th><th></th></tr></thead><tbody id="projList"></tbody></table>
     <div id="projEmpty" class="empty hidden">No projects yet. Create your first one from a template.</div>
   </div>
-  <footer class="credit"><img src="assets/datix-logo.png" alt=""> Developed by Datix AI · <a href="#" data-link="https://datixai.com">datixai.com</a></footer>
+  <footer class="credit"><a href="#" class="credit-big" data-link="https://datixai.com"><img src="assets/datix-mark.png" alt=""><span>Developed by <b>Datix AI</b></span><span class="credit-url">datixai.com</span></a></footer>
 </section>
 
 <!-- Editor -->
 <section id="editorView" class="view hidden">
   <header class="topbar">
     <button class="icon-btn" data-cmd="dashboard" title="All projects">&#8962;</button>
-    <span class="logo-mark sm">D<span>x</span></span>
+    <img src="assets/datex-icon.png" class="app-logo" alt="">
+    <span class="wordmark">Datex</span>
+    <span class="crumb">/</span>
     <strong id="projName" class="proj-name"></strong>
     <div class="spacer"></div>
     <label class="tb-label">Main <select id="mainSel"></select></label>
@@ -76,7 +80,7 @@
       <div id="tabs" class="tabs"></div>
       <div id="editor" class="editor"></div>
       <div id="imageView" class="image-view hidden"></div>
-      <div class="statusbar"><span id="status">Ready</span><span class="spacer"></span><span id="cursorPos"></span><span id="wordCount"></span></div>
+      <div class="statusbar"><span id="status">Ready</span><span class="spacer"></span><span id="cursorPos"></span><span id="wordCount"></span><a href="#" class="credit-link" data-link="https://datixai.com" title="Visit datixai.com"><img src="assets/datix-mark.png" alt="">Developed by Datix AI</a></div>
     </main>
     <div class="gutter" data-resize="pdfPane"></div>
 

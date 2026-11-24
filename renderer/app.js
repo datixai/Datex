@@ -287,7 +287,7 @@ async function openProject(dir) {
     Object.assign(S, { root: p.dir, name: p.name, main: p.main, engine: p.engine, files: new Map(), active: null, issues: [], pdf: null, pdfPath: null, pages: [], lastSnap: Date.now() });
     for (const m of monaco.editor.getModels()) m.dispose();
     $('#dashboard').classList.add('hidden'); $('#editorView').classList.remove('hidden');
-    $('#projName').textContent = p.name; document.title = p.name + ' - Datex';
+    $('#projName').textContent = p.name; document.title = 'Datex  |  ' + p.name;
     $('#engineSel').value = S.engine; $('#autoChk').checked = settings.autoCompile !== false;
     $('#pdfView').innerHTML = '<div class="pdf-empty">Compiling...</div>';
     $('#tabs').innerHTML = ''; setIssues([]);
@@ -606,7 +606,7 @@ function openPanel(name) {
   document.querySelectorAll('.tool-btn').forEach(b => b.classList.toggle('active', b.dataset.panel === name));
   $('#drawer').classList.remove('hidden');
   const P = { review: ['Track changes', reviewPanel], comments: ['Comments', commentsPanel], history: ['History', historyPanel], refs: ['References', refsPanel],
-    ai: ['AI assistant', aiPanel], share: ['Live session', live.sharePanel], symbols: ['Symbol palette', symbolsPanel], search: ['Search project', searchPanel], git: ['Git and GitHub', gitPanel] }[name];
+    git: ['Git, GitHub and Cloud', gitPanel], ai: ['AI assistant', aiPanel], share: ['Live session', live.sharePanel], symbols: ['Symbol palette', symbolsPanel], search: ['Search project', searchPanel] }[name];
   $('#drawerTitle').textContent = P[0]; $('#drawerBody').innerHTML = ''; P[1]($('#drawerBody'));
 }
 function refreshPanel(name) { if (S.panel === name && !$('#drawer').classList.contains('hidden')) { const P = { share: live.sharePanel, comments: commentsPanel }[name]; if (P) { $('#drawerBody').innerHTML = ''; P($('#drawerBody')); } } }
@@ -878,13 +878,33 @@ function searchPanel(el) {
 
 async function gitPanel(el) {
   const st = await api('git:status', S.root);
-  el.innerHTML = `<p class="muted">Every project keeps its own version history. Connect it to GitHub, GitLab or any Git server to sync and back up.</p>
+  const cfg = await api('project:config', S.root, {});
+  const clouds = await api('cloud:detect');
+  el.innerHTML = `<div class="sym-cat">Cloud backup</div>
+    <p class="muted small">Keeps a copy of this project in your Google Drive, OneDrive or Dropbox folder. The cloud app on this PC uploads it.</p>
+    <select id="clSel">${clouds.map(c => `<option value="${esc(c.path)}"${c.path === cfg.cloud ? ' selected' : ''}>${esc(c.name)} (${esc(c.path)})</option>`).join('')}${cfg.cloud && !clouds.some(c => c.path === cfg.cloud) ? `<option value="${esc(cfg.cloud)}" selected>${esc(cfg.cloud)}</option>` : ''}<option value="__pick">Choose another folder...</option></select>
+    ${clouds.length ? '' : '<div class="muted small">No Google Drive, OneDrive or Dropbox folder found. Install <a href="#" data-link="https://www.google.com/drive/download/">Google Drive for desktop</a>, or choose any folder.</div>'}
+    <label class="row"><input type="checkbox" id="clAuto" ${cfg.cloudAuto !== false ? 'checked' : ''}> Back up automatically each time a version is saved</label>
+    <div class="row"><button class="btn primary" id="clNow">Back up now</button></div>
+    <div class="sym-cat">Git and GitHub</div>
+    <p class="muted">Every project keeps its own version history. Connect it to GitHub, GitLab or any Git server to sync and back up.</p>
     <label class="muted">Remote URL</label><div class="row"><input id="gtUrl" value="${esc(st.remote)}" placeholder="https://github.com/you/paper.git"><button class="btn" id="gtSet">Save</button></div>
     <div class="muted small">Branch: ${esc(st.branch || 'none yet')}</div>
     <div class="row"><button class="btn primary" id="gtPush">Push to remote</button><button class="btn" id="gtPull">Pull from remote</button></div>
     <pre id="gtOut" class="mono small" style="white-space:pre-wrap"></pre>
     <p class="muted small">Sign-in is handled by Git Credential Manager (included with Git for Windows). The first push opens a browser sign-in window.</p>`;
   const out = el.querySelector('#gtOut');
+  const sel = el.querySelector('#clSel');
+  const saveCloud = async () => {
+    if (sel.value === '__pick') { const p = await api('cloud:pick'); if (!p) { sel.value = cfg.cloud || sel.options[0].value; return; } sel.insertAdjacentHTML('afterbegin', `<option value="${esc(p)}">${esc(p)}</option>`); sel.value = p; }
+    await api('project:config', S.root, { cloud: sel.value, cloudAuto: el.querySelector('#clAuto').checked });
+  };
+  sel.onchange = saveCloud; el.querySelector('#clAuto').onchange = saveCloud;
+  el.querySelector('#clNow').onclick = async () => {
+    if (!sel.value || sel.value === '__pick') return toast('Choose a cloud folder first');
+    await saveCloud(); await saveAll();
+    try { const d = await api('cloud:backup', S.root, sel.value); toast('Backed up to ' + d); } catch (e) { toast(e.message, true); }
+  };
   el.querySelector('#gtSet').onclick = async () => { try { await api('git:setRemote', S.root, el.querySelector('#gtUrl').value.trim()); toast('Remote saved'); } catch (e) { toast(e.message, true); } };
   el.querySelector('#gtPush').onclick = async () => { out.textContent = 'Pushing...'; try { await saveAll(); out.textContent = await api('git:push', S.root) || 'Done'; } catch (e) { out.textContent = e.message; } };
   el.querySelector('#gtPull').onclick = async () => {
@@ -928,11 +948,44 @@ async function settingsDialog() {
     if (!S.root) renderProjects();
   };
 }
+async function cloneRepo() {
+  const url = await promptModal('Clone from GitHub', 'Repository URL (GitHub, GitLab, Bitbucket or any Git server)', 'https://github.com/');
+  if (!url) return;
+  toast('Cloning...');
+  try { const dir = await api('repo:clone', url); if (S.root) await showDashboard(); openProject(dir); }
+  catch (e) { toast(e.message, true); }
+}
+async function packagesDialog() {
+  const t = await api('tex:info');
+  const c = modal(`<h2>TeX packages</h2>
+    <p>Datex has its own TeX engine built in, so no MiKTeX or TeX Live install is needed.</p>
+    <div class="card small">
+      <div><b>1. Already included:</b> the common packages (amsmath, graphicx, tikz, pgfplots, biblatex styles, hyperref, booktabs, IEEEtran, beamer and more) ship inside Datex and work offline.</div>
+      <div style="margin-top:6px"><b>2. Installed automatically:</b> when a document uses any other package, Datex downloads it from the TeX Live archive during the compile and keeps it. The status bar shows "Installing packages" while this happens. It needs internet only that first time.</div>
+      <div style="margin-top:6px"><b>3. Install ahead of time:</b> type package names below to download them now, for example before going offline.</div>
+    </div>
+    <div class="muted small" style="margin-top:8px">Engine: ${t.builtin ? 'Datex TeX (built in)' : 'built-in engine missing'}${t.system ? ' · also found ' + esc(t.version || 'a system TeX') : ''} · Package store: ${t.cacheMB} MB</div>
+    <label>Install packages</label><div class="row"><input id="pkNames" placeholder="for example: siunitx, chemfig, tcolorbox"><button class="btn primary" id="pkGo">Install</button></div>
+    <div class="row" style="margin-top:8px"><button class="btn" id="pkCommon">Download the common set again</button></div>
+    <pre id="pkOut" class="mono small hidden" style="max-height:180px;overflow:auto;white-space:pre-wrap;background:var(--bg3);padding:8px;border-radius:6px"></pre>
+    <div class="modal-actions"><button class="btn primary" id="pkClose">Close</button></div>`);
+  const o = c.querySelector('#pkOut');
+  const show = () => o.classList.remove('hidden');
+  const off = window.datex.onTexProgress(tx => { o.textContent += tx; o.scrollTop = o.scrollHeight; });
+  closeModal.onClose = off;
+  c.querySelector('#pkClose').onclick = closeModal;
+  c.querySelector('#pkGo').onclick = async () => {
+    show(); o.textContent = 'Installing...\n';
+    try { const l = await api('tex:install', c.querySelector('#pkNames').value); o.textContent += '\nInstalled: ' + l.join(', ') + '\n'; toast('Packages installed'); }
+    catch (e) { o.textContent += '\n' + e.message + '\n'; }
+  };
+  c.querySelector('#pkCommon').onclick = async () => { show(); o.textContent = 'Starting...\n'; try { await api('tex:downloadAll'); } catch (e) { o.textContent += e.message; } };
+}
 async function aboutDialog() {
   const info = await api('app:info');
-  const c = modal(`<div class="about"><span class="logo-mark">D<span>x</span></span><h2 style="margin:10px 0 2px">Datex</h2><div class="muted">Version ${esc(info.version)}</div>
+  const c = modal(`<div class="about"><img src="assets/datex-icon.png" class="app-logo xl" alt=""><h2 style="margin:10px 0 2px">Datex</h2><div class="muted">Version ${esc(info.version)}</div>
     <p>A complete LaTeX writing studio for Windows: editor, TeX engine, PDF viewer, version history, track changes, references and local AI in one app.</p>
-    <img src="assets/datix-logo.png" alt="Datix AI"><div>Developed by <b>Datix AI</b></div><div><a href="#" data-link="https://datixai.com">datixai.com</a></div>
+    <a href="#" class="credit-big" data-link="https://datixai.com" style="margin:14px auto 0"><img src="assets/datix-mark.png" alt=""><span>Developed by <b>Datix AI</b></span><span class="credit-url">datixai.com</span></a>
     <div class="modal-actions" style="justify-content:center"><button class="btn primary" id="abOk">Close</button></div></div>`);
   c.querySelector('#abOk').onclick = closeModal;
 }
@@ -951,7 +1004,7 @@ $x^2 + y_1$               Inline math
 
 // ---------------- Commands & wiring ----------------
 const CMDS = {
-  newProject, joinSession: () => live.joinDialog(), openProject: openFolder, dashboard: showDashboard, settings: settingsDialog, about: aboutDialog, guide: guideDialog,
+  newProject, joinSession: () => live.joinDialog(), packages: () => packagesDialog(), cloneRepo: () => cloneRepo(), openProject: openFolder, dashboard: showDashboard, settings: settingsDialog, about: aboutDialog, guide: guideDialog,
   save: () => saveAll().then(() => toast('Saved')), compile: () => compile(),
   stop: () => api('compile:stop', S.root), clean: async () => { await api('compile:clean', S.root); toast('Build files cleared'); },
   syncForward, zoomIn: () => zoomStep(1), zoomOut: () => zoomStep(-1),
@@ -971,6 +1024,7 @@ function wire() {
     const l = e.target.closest('[data-link]'); if (l) { e.preventDefault(); api('shell:open', l.dataset.link); }
   });
   window.datex.onMenu(runCmd);
+  window.datex.onCompileOutput(t => { const m = String(t).match(/downloading\s+[`'"]?([^\s`'"]+)/i); if (m && S.compiling) status('Installing packages: ' + m[1]); });
   $('#projSearch').oninput = debounce(renderProjects, 150);
   $('#drawerClose').onclick = closePanel;
   $('#modal').onclick = e => { if (e.target.id === 'modal') closeModal(); };
