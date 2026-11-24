@@ -20,7 +20,7 @@ const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
 const DEFAULTS = {
   projectsDir: process.env.DATEX_USERDATA ? path.join(process.env.DATEX_USERDATA, 'Projects') : path.join(app.getPath('documents'), 'Datex Projects'),
   engine: 'auto', autoCompile: true, compileTimeout: 0,
-  fontSize: 14, wordWrap: true, theme: 'dark', userName: 'Me', spellLang: 'en-GB',
+  fontSize: 14, wordWrap: true, theme: 'system', userName: 'Me', spellLang: 'en-GB',
   ollamaUrl: 'http://127.0.0.1:11434', aiModel: 'gpt-oss:20b',
   recent: []
 };
@@ -30,6 +30,8 @@ const running = new Map(); // root -> child process
 
 function loadSettings() {
   try { settings = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE(), 'utf8')) }; } catch { settings = { ...DEFAULTS }; }
+  // Older versions saved 'dark' by default; switch everyone once to follow Windows.
+  if (!settings.themeV2) { settings.theme = 'system'; settings.themeV2 = true; }
 }
 function saveSettings() {
   fs.mkdirSync(path.dirname(SETTINGS_FILE()), { recursive: true });

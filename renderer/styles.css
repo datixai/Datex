@@ -210,7 +210,6 @@ input:focus,select:focus,textarea:focus{border-color:var(--text)}
 .notice{background:var(--bg3);border-color:var(--line)}
 #dashboard{background:var(--bg)}
 .sky{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0}
-#dashboard>*:not(.sky){position:relative;z-index:1}
 .dash-head{background:transparent;color:var(--text);border-bottom:1px solid var(--line)}
 .dash-head .btn:not(.primary){background:transparent;border-color:var(--line);color:var(--text)}
 .dash-head .btn:not(.primary):hover{border-color:var(--text)}

@@ -5,7 +5,6 @@ import * as live from './live.js';
 import { starfield } from './stars.js';
 const splashStart = performance.now();
 const stopSplashStars = starfield(document.querySelector('#splash .sky'), { density: 0.00028 });
-starfield(document.querySelector('#dashboard .sky'));
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('../node_modules/pdfjs-dist/build/pdf.worker.mjs', import.meta.url).href;
 
@@ -55,10 +54,14 @@ function confirmModal(title, text, ok = 'OK', danger) {
     c.querySelector('#cmNo').onclick = () => { closeModal(); res(false); };
   });
 }
+// Theme: 'system' follows Windows light/dark mode, or the user picks 'light' or 'dark' in Settings.
+const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
+const isDark = () => settings.theme === 'dark' || (settings.theme !== 'light' && systemDark.matches);
 function applyTheme() {
-  document.body.className = settings.theme === 'light' ? 'light' : 'dark';
-  if (monaco) monaco.editor.setTheme(settings.theme === 'light' ? 'datex-light' : 'datex-dark');
+  document.body.className = isDark() ? 'dark' : 'light';
+  if (monaco) monaco.editor.setTheme(isDark() ? 'datex-dark' : 'datex-light');
 }
+systemDark.addEventListener('change', () => applyTheme());
 const fmtTime = t => new Date(t).toLocaleString();
 
 // ---------------- Monaco ----------------
@@ -169,7 +172,7 @@ let addWordCmd = null;
 
 function createEditor() {
   editor = monaco.editor.create($('#editor'), {
-    theme: settings.theme === 'light' ? 'datex-light' : 'datex-dark', automaticLayout: true,
+    theme: isDark() ? 'datex-dark' : 'datex-light', automaticLayout: true,
     fontSize: settings.fontSize || 14, fontFamily: 'Cascadia Code, Consolas, monospace', wordWrap: settings.wordWrap ? 'on' : 'off',
     minimap: { enabled: true, renderCharacters: false }, glyphMargin: true, lineNumbersMinChars: 4,
     bracketPairColorization: { enabled: false }, matchBrackets: 'always', smoothScrolling: true, scrollBeyondLastLine: false,
@@ -637,7 +640,7 @@ async function reviewDialog(rel, hash = 'HEAD', title) {
     <div class="row muted small" style="margin-bottom:6px"><span style="flex:1">Left: saved version (${esc(hash === 'HEAD' ? 'last snapshot' : hash.slice(0, 7))})</span><span style="flex:1">Right: your current text (editable)</span></div>
     <div class="diff-host" id="diffHost"></div>`, true);
   const om = monaco.editor.createModel(orig, f.model.getLanguageId());
-  const de = monaco.editor.createDiffEditor(c.querySelector('#diffHost'), { automaticLayout: true, originalEditable: false, renderSideBySide: true, theme: settings.theme === 'light' ? 'datex-light' : 'datex-dark', fontSize: settings.fontSize || 14, wordWrap: 'on' });
+  const de = monaco.editor.createDiffEditor(c.querySelector('#diffHost'), { automaticLayout: true, originalEditable: false, renderSideBySide: true, theme: isDark() ? 'datex-dark' : 'datex-light', fontSize: settings.fontSize || 14, wordWrap: 'on' });
   de.setModel({ original: om, modified: f.model });
   let idx = 0;
   const changes = () => de.getLineChanges() || [];
@@ -925,7 +928,7 @@ async function settingsDialog() {
   const c = modal(`<h2>Settings</h2>
     <label>Your name (shown on comments and versions)</label><input id="stName" value="${esc(s.userName || 'Me')}">
     <label>Projects folder</label><input id="stDir" value="${esc(s.projectsDir)}">
-    <div class="row"><div style="flex:1"><label>Theme</label><select id="stTheme"><option value="dark">Dark</option><option value="light">Light</option></select></div>
+    <div class="row"><div style="flex:1"><label>Theme</label><select id="stTheme"><option value="system">Same as Windows (automatic)</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
       <div style="flex:1"><label>Editor font size</label><input id="stFont" type="number" min="10" max="28" value="${s.fontSize}"></div></div>
     <div class="row"><div style="flex:1"><label>Default engine</label><select id="stEngine"><option value="auto">Auto</option><option value="builtin">Built-in (Datex TeX)</option><option value="pdflatex">pdfLaTeX</option><option value="xelatex">XeLaTeX</option><option value="lualatex">LuaLaTeX</option></select></div>
       <div style="flex:1"><label>Compile time limit (seconds, 0 = none)</label><input id="stTime" type="number" min="0" value="${s.compileTimeout}"></div></div>
@@ -937,7 +940,7 @@ async function settingsDialog() {
     <div class="muted small">Engine: ${tex.builtin ? 'Datex TeX built in' : 'built-in engine missing'}${tex.system ? ' · system TeX found (' + esc(tex.version) + ')' : ''}. Missing packages install automatically the first time a document needs them.</div>
     <div class="row" style="margin-top:6px"><button class="btn" id="stPk">Download common packages for offline use</button></div><pre id="stPkOut" class="mono small hidden" style="max-height:140px;overflow:auto;white-space:pre-wrap"></pre>
     <div class="modal-actions"><button class="btn ghost" id="stNo">Cancel</button><button class="btn primary" id="stOk">Save</button></div>`);
-  c.querySelector('#stTheme').value = s.theme; c.querySelector('#stLang').value = s.spellLang || 'en-GB'; c.querySelector('#stEngine').value = s.engine;
+  c.querySelector('#stTheme').value = s.theme || 'system'; c.querySelector('#stLang').value = s.spellLang || 'en-GB'; c.querySelector('#stEngine').value = s.engine;
   c.querySelector('#stNo').onclick = closeModal;
   c.querySelector('#stPk').onclick = async () => {
     const o = c.querySelector('#stPkOut'); o.classList.remove('hidden'); o.textContent = 'Starting...\n';
