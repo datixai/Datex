@@ -1,7 +1,7 @@
 {
   "name": "datex",
   "productName": "Datex",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Datex: a professional LaTeX editor for Windows. Developed by Datix AI (datixai.com)",
   "main": "main.js",
   "author": "Datix AI",

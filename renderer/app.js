@@ -2,6 +2,10 @@
 import * as pdfjsLib from '../node_modules/pdfjs-dist/build/pdf.mjs';
 import { LATEX_COMMANDS, ENVIRONMENTS, SYMBOLS, AI_ACTIONS } from './data.js';
 import * as live from './live.js';
+import { starfield } from './stars.js';
+const splashStart = performance.now();
+const stopSplashStars = starfield(document.querySelector('#splash .sky'), { density: 0.00028 });
+starfield(document.querySelector('#dashboard .sky'));
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('../node_modules/pdfjs-dist/build/pdf.worker.mjs', import.meta.url).href;
 
@@ -99,14 +103,15 @@ function setupLanguages() {
   });
 
   monaco.editor.defineTheme('datex-dark', { base: 'vs-dark', inherit: true, rules: [
-    { token: 'keyword', foreground: '7cb7ff' }, { token: 'keyword.control', foreground: 'c792ea', fontStyle: 'bold' },
-    { token: 'type', foreground: 'ffcb6b' }, { token: 'string', foreground: 'a5e075' }, { token: 'variable', foreground: '89ddff' },
-    { token: 'comment', foreground: '6b7894', fontStyle: 'italic' }],
-    colors: { 'editor.background': '#0f1420', 'editorGutter.background': '#0f1420', 'editor.lineHighlightBackground': '#172036' } });
+    { token: '', foreground: 'd9d9d9' }, { token: 'keyword', foreground: 'ffffff' }, { token: 'keyword.control', foreground: 'ffffff', fontStyle: 'bold' },
+    { token: 'type', foreground: 'ffffff', fontStyle: 'underline' }, { token: 'string', foreground: 'b3b3b3', fontStyle: 'italic' }, { token: 'variable', foreground: 'cfcfcf' },
+    { token: 'delimiter', foreground: '8a8a8a' }, { token: 'comment', foreground: '6a6a6a', fontStyle: 'italic' }],
+    colors: { 'editor.background': '#000000', 'editorGutter.background': '#000000', 'editor.lineHighlightBackground': '#111111', 'editorLineNumber.foreground': '#4d4d4d', 'editorLineNumber.activeForeground': '#ffffff', 'editorCursor.foreground': '#ffffff', 'editor.selectionBackground': '#3a3a3a', 'minimap.background': '#000000' } });
   monaco.editor.defineTheme('datex-light', { base: 'vs', inherit: true, rules: [
-    { token: 'keyword', foreground: '1d4ed8' }, { token: 'keyword.control', foreground: '7c3aed', fontStyle: 'bold' },
-    { token: 'type', foreground: 'b45309' }, { token: 'string', foreground: '15803d' }, { token: 'variable', foreground: '0e7490' },
-    { token: 'comment', foreground: '8b95a7', fontStyle: 'italic' }], colors: {} });
+    { token: '', foreground: '262626' }, { token: 'keyword', foreground: '000000' }, { token: 'keyword.control', foreground: '000000', fontStyle: 'bold' },
+    { token: 'type', foreground: '000000', fontStyle: 'underline' }, { token: 'string', foreground: '555555', fontStyle: 'italic' }, { token: 'variable', foreground: '333333' },
+    { token: 'delimiter', foreground: '777777' }, { token: 'comment', foreground: '9a9a9a', fontStyle: 'italic' }],
+    colors: { 'editor.background': '#ffffff', 'editor.lineHighlightBackground': '#f4f4f4', 'editorCursor.foreground': '#000000', 'editor.selectionBackground': '#d6d6d6' } });
 
   const K = monaco.languages.CompletionItemKind, R = monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet;
   monaco.languages.registerCompletionItemProvider('latex', {
@@ -167,7 +172,7 @@ function createEditor() {
     theme: settings.theme === 'light' ? 'datex-light' : 'datex-dark', automaticLayout: true,
     fontSize: settings.fontSize || 14, fontFamily: 'Cascadia Code, Consolas, monospace', wordWrap: settings.wordWrap ? 'on' : 'off',
     minimap: { enabled: true, renderCharacters: false }, glyphMargin: true, lineNumbersMinChars: 4,
-    bracketPairColorization: { enabled: true }, smoothScrolling: true, scrollBeyondLastLine: false,
+    bracketPairColorization: { enabled: false }, matchBrackets: 'always', smoothScrolling: true, scrollBeyondLastLine: false,
     quickSuggestions: { other: true, comments: false, strings: true }, suggestOnTriggerCharacters: true, tabSize: 2, unicodeHighlight: { ambiguousCharacters: false }
   });
   addWordCmd = editor.addCommand(0, async (_a, w) => { await api('spell:add', w); delete spellBad[w]; spellCheck(); });
@@ -1066,6 +1071,8 @@ async function main() {
     w.innerHTML = 'No TeX engine was found. Reinstall Datex to restore the built-in engine, or install <a href="#" data-link="https://miktex.org/download">MiKTeX</a>.';
   }
   showDashboard();
+  // Keep the opening screen up long enough to read, then fade it out.
+  setTimeout(() => { const sp = $('#splash'); sp.classList.add('out'); setTimeout(() => { sp.remove(); stopSplashStars(); }, 800); }, Math.max(0, 2600 - (performance.now() - splashStart)));
 }
 window.__datex = { S, openProject, compile, openPanel, syncForward, newProject, live };
 main().catch(e => { document.body.innerHTML = '<pre style="padding:20px;color:#f88">Datex failed to start:\n' + esc(e.stack || e.message) + '</pre>'; });

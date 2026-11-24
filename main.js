@@ -54,11 +54,12 @@ function run(cmd, args, opts = {}) {
 function createWindow() {
   win = new BrowserWindow({
     width: 1500, height: 920, minWidth: 980, minHeight: 600,
-    title: 'Datex', backgroundColor: '#0f1420',
+    title: 'Datex', backgroundColor: '#000000', show: false,
     icon: path.join(APP_DIR, 'build', 'icon.png'),
     webPreferences: { preload: path.join(APP_DIR, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false }
   });
   win.loadURL('app://datex/renderer/index.html');
+  win.once('ready-to-show', () => win.show());
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   win.webContents.on('will-navigate', e => e.preventDefault());
   buildMenu();
@@ -71,6 +72,7 @@ function selfTest() {
   wc.on('console-message', (e) => console.log('[renderer]', e.level, e.message));
   wc.once('did-finish-load', async () => {
     const wait = ms => new Promise(r => setTimeout(r, ms));
+    if (process.env.DATEX_SPLASHSHOT) { await wait(1300); fs.writeFileSync(process.env.DATEX_SPLASHSHOT, (await wc.capturePage()).toPNG()); }
     await wait(2500);
     const js = c => wc.executeJavaScript(c).catch(err => 'ERR ' + err.message);
     console.log('open:', await js(`window.__datex.openProject(${JSON.stringify(process.env.DATEX_SELFTEST)}).then(()=>'ok')`));
