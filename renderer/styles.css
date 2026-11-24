@@ -232,3 +232,4 @@ input:focus,select:focus,textarea:focus{border-color:var(--text)}
 @keyframes load{from{transform:translateX(-100%)}to{transform:translateX(260%)}}
 .tree .node,.outline .node{filter:grayscale(1)}
 .credit-link,.credit-big{text-decoration:none}
+body.light .dash-head{color:var(--text)}

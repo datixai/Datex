@@ -105,13 +105,13 @@ function setupLanguages() {
   monaco.editor.defineTheme('datex-dark', { base: 'vs-dark', inherit: true, rules: [
     { token: '', foreground: 'd9d9d9' }, { token: 'keyword', foreground: 'ffffff' }, { token: 'keyword.control', foreground: 'ffffff', fontStyle: 'bold' },
     { token: 'type', foreground: 'ffffff', fontStyle: 'underline' }, { token: 'string', foreground: 'b3b3b3', fontStyle: 'italic' }, { token: 'variable', foreground: 'cfcfcf' },
-    { token: 'delimiter', foreground: '8a8a8a' }, { token: 'comment', foreground: '6a6a6a', fontStyle: 'italic' }],
-    colors: { 'editor.background': '#000000', 'editorGutter.background': '#000000', 'editor.lineHighlightBackground': '#111111', 'editorLineNumber.foreground': '#4d4d4d', 'editorLineNumber.activeForeground': '#ffffff', 'editorCursor.foreground': '#ffffff', 'editor.selectionBackground': '#3a3a3a', 'minimap.background': '#000000' } });
+    { token: 'delimiter', foreground: '8a8a8a' }, { token: 'delimiter.bracket', foreground: '8a8a8a' }, { token: 'delimiter.square', foreground: '8a8a8a' }, { token: 'comment', foreground: '6a6a6a', fontStyle: 'italic' }],
+    colors: { 'editor.background': '#000000', 'editorGutter.background': '#000000', 'editor.lineHighlightBackground': '#111111', 'editorLineNumber.foreground': '#4d4d4d', 'editorLineNumber.activeForeground': '#ffffff', 'editorCursor.foreground': '#ffffff', 'editor.selectionBackground': '#3a3a3a', 'minimap.background': '#000000', 'editorBracketHighlight.foreground1': '#8a8a8a', 'editorBracketHighlight.foreground2': '#8a8a8a', 'editorBracketHighlight.foreground3': '#8a8a8a', 'editorBracketHighlight.foreground4': '#8a8a8a', 'editorBracketHighlight.foreground5': '#8a8a8a', 'editorBracketHighlight.foreground6': '#8a8a8a', 'editorBracketHighlight.unexpectedBracket.foreground': '#8a8a8a' } });
   monaco.editor.defineTheme('datex-light', { base: 'vs', inherit: true, rules: [
     { token: '', foreground: '262626' }, { token: 'keyword', foreground: '000000' }, { token: 'keyword.control', foreground: '000000', fontStyle: 'bold' },
     { token: 'type', foreground: '000000', fontStyle: 'underline' }, { token: 'string', foreground: '555555', fontStyle: 'italic' }, { token: 'variable', foreground: '333333' },
-    { token: 'delimiter', foreground: '777777' }, { token: 'comment', foreground: '9a9a9a', fontStyle: 'italic' }],
-    colors: { 'editor.background': '#ffffff', 'editor.lineHighlightBackground': '#f4f4f4', 'editorCursor.foreground': '#000000', 'editor.selectionBackground': '#d6d6d6' } });
+    { token: 'delimiter', foreground: '777777' }, { token: 'delimiter.bracket', foreground: '777777' }, { token: 'delimiter.square', foreground: '777777' }, { token: 'comment', foreground: '9a9a9a', fontStyle: 'italic' }],
+    colors: { 'editor.background': '#ffffff', 'editor.lineHighlightBackground': '#f4f4f4', 'editorCursor.foreground': '#000000', 'editor.selectionBackground': '#d6d6d6', 'editorBracketHighlight.foreground1': '#777777', 'editorBracketHighlight.foreground2': '#777777', 'editorBracketHighlight.foreground3': '#777777', 'editorBracketHighlight.foreground4': '#777777', 'editorBracketHighlight.foreground5': '#777777', 'editorBracketHighlight.foreground6': '#777777', 'editorBracketHighlight.unexpectedBracket.foreground': '#777777' } });
 
   const K = monaco.languages.CompletionItemKind, R = monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet;
   monaco.languages.registerCompletionItemProvider('latex', {
