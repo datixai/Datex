@@ -41,8 +41,7 @@
       "target": [
         "nsis"
       ],
-      "icon": "build/icon.ico",
-      "publisherName": "Datix AI"
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,

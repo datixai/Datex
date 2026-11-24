@@ -267,6 +267,14 @@ function compile(root, main, requested) {
     stopCompile(root);
     const outdir = path.join(root, '.datex', 'build');
     fs.mkdirSync(outdir, { recursive: true });
+    // \include{dir/file} writes dir/file.aux into the build folder, so mirror the project's folders there.
+    const mirror = (rel) => {
+      for (const e of fs.readdirSync(path.join(root, rel), { withFileTypes: true })) {
+        if (!e.isDirectory() || e.name.startsWith('.') || e.name === 'node_modules') continue;
+        const r = path.join(rel, e.name); fs.mkdirSync(path.join(outdir, r), { recursive: true }); mirror(r);
+      }
+    };
+    try { mirror(''); } catch {}
     const engine = await resolveEngine(requested);
     if (!engine) return resolve({ ok: false, code: -1, pdf: null, issues: [{ level: 'error', file: main, line: null, message: 'No TeX engine found. Reinstall Datex or install MiKTeX.', detail: '' }], log: '', output: '', ms: 0 });
     let cmd, args, env = process.env;
@@ -505,7 +513,7 @@ handle('project:zip', async (root) => {
   const list = path.join(app.getPath('temp'), 'datex-zip-' + Date.now() + '.txt');
   await fsp.writeFile(list, files.join('\n'));
   // Windows 10+ ships bsdtar, which can write zip files.
-  const t = await run('tar', ['-a', '-c', '-f', r.filePath, '-T', list], { cwd: root });
+  const t = await run(path.join(process.env.SystemRoot || 'C:/Windows', 'System32', 'tar.exe'), ['-a', '-c', '-f', r.filePath, '-T', list], { cwd: root });
   await fsp.rm(list, { force: true });
   if (!t.ok) throw new Error(t.stderr || 'Could not create ZIP');
   return r.filePath;

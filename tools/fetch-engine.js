@@ -17,7 +17,7 @@ const exe = path.join(bin, 'tectonic.exe');
   if (!res.ok) throw new Error('Download failed: ' + res.status);
   const zip = path.join(bin, 'tectonic.zip');
   fs.writeFileSync(zip, Buffer.from(await res.arrayBuffer()));
-  execFileSync('tar', ['-xf', zip, '-C', bin]);
+  execFileSync(path.join(process.env.SystemRoot || 'C:/Windows', 'System32', 'tar.exe'), ['-xf', zip, '-C', bin]);
   fs.rmSync(zip);
   console.log(execFileSync(exe, ['--version']).toString().trim());
 })().catch(e => { console.error(e.message); process.exit(1); });
