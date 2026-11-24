@@ -12,6 +12,7 @@ Developed by **Datix AI** · [datixai.com](https://datixai.com)
 | TeX engine (MiKTeX style) | Built-in engine (Tectonic) ships in the installer, so nothing else is needed. Common packages come pre-cached; any other package downloads automatically the first time it is used. Uses MiKTeX or TeX Live through latexmk for pdfLaTeX, XeLaTeX or LuaLaTeX if one is installed |
 | PDF viewer (WinEdt PDF style) | Built-in viewer, zoom, fit width, page counter, export. SyncTeX both ways: double-click the PDF to jump to the source, Ctrl+Alt+J to jump from the source to the PDF |
 | Overleaf paid-tier features | Auto compile while typing, no compile time limit, full project history with labelled versions, compare and restore, track changes (accept or reject each change), comments with replies and resolve, Git and GitHub sync, Zotero import, add references by DOI, advanced reference search, symbol palette, templates |
+| Live co-editing | Share button starts a session on the office network; others join with the address and code. Everyone edits the same files at once with coloured cursors, presence and synced comments, and each PC compiles its own PDF |
 | AI (local) | Fix compile errors, improve writing, fix grammar, shorten, explain, make tables, equations and TikZ diagrams, draft an abstract, suggest titles, translate. Runs with local Ollama models, so documents never leave the PC |
 
 Templates: Blank, Article, Report, Thesis (multi-file), IEEE Conference, Presentation (Beamer), CV, Letter.
@@ -44,6 +45,6 @@ Each project is a normal folder. Datex keeps its build output in `.datex/build`,
 
 ## Roadmap
 
-- Real-time co-editing over the office network and a self-hosted sync server
+- Live sessions over the internet through a hosted relay server
 - Code signing for the installer
 - More dictionaries and templates

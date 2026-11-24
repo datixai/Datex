@@ -563,7 +563,8 @@ async function renderPdf() {
   const order = [...pages].sort((a, b) => Math.abs(a.div.offsetTop - view.scrollTop) - Math.abs(b.div.offsetTop - view.scrollTop));
   for (const p of order) {
     if (token !== renderToken) return;
-    await p.page.render({ canvasContext: p.cv.getContext('2d'), viewport: p.vp, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null }).promise;
+    try { await p.page.render({ canvasContext: p.cv.getContext('2d'), viewport: p.vp, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null }).promise; }
+    catch (e) { if (token !== renderToken || /cancel|destroy/i.test(e?.name + e?.message)) return; throw e; }
   }
   updatePageInfo();
 }

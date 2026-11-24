@@ -1,7 +1,7 @@
 {
   "name": "datex",
   "productName": "Datex",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Datex: a professional LaTeX editor for Windows. Developed by Datix AI (datixai.com)",
   "main": "main.js",
   "author": "Datix AI",
@@ -12,7 +12,7 @@
     "test": "node --test tests/",
     "engine": "node tools/fetch-engine.js",
     "warm": "node tools/warm-cache.js",
-    "dist": "npm test && node tools/fetch-engine.js && node tools/warm-cache.js && electron-builder --win nsis --x64 --publish never"
+    "dist": "npm test && node tools/build-vendor.js && node tools/fetch-engine.js && node tools/warm-cache.js && electron-builder --win nsis --x64 --publish never"
   },
   "build": {
     "appId": "ai.datix.datex",

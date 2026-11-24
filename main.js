@@ -56,7 +56,7 @@ function createWindow() {
     width: 1500, height: 920, minWidth: 980, minHeight: 600,
     title: 'Datex', backgroundColor: '#0f1420',
     icon: path.join(APP_DIR, 'build', 'icon.png'),
-    webPreferences: { preload: path.join(APP_DIR, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false }
+    webPreferences: { preload: path.join(APP_DIR, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false }
   });
   win.loadURL('app://datex/renderer/index.html');
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: 'deny' }; });
