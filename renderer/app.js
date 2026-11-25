@@ -286,6 +286,11 @@ async function newProject() {
   c.querySelector('#npOk').onclick = go;
   c.querySelector('#npName').onkeydown = e => { if (e.key === 'Enter') go(); };
 }
+async function importZip(file) {
+  status('Importing ZIP...');
+  try { const d = await api('project:importZip', file || null); if (d) { toast('Project imported'); if (S.root) await showDashboard(); openProject(d); } else status('Ready'); }
+  catch (e) { status('Ready'); toast(e.message, true); }
+}
 async function openFolder() { const d = await api('project:pick'); if (d) openProject(d); }
 
 // ---------------- Project ----------------
@@ -522,7 +527,27 @@ async function compile() {
   if (r.pdf && r.fresh !== false) { try { await loadPdf(r.pdf); } catch (e) { toast('Could not show PDF: ' + e.message, true); } }
   else if (!r.pdf) { $('#pdfView').innerHTML = '<div class="pdf-empty">No PDF was produced. Open Logs to see what went wrong.</div>'; $('#logs').classList.remove('hidden'); }
   if (r.ok && r.pdf) api('project:config', S.root, {}).then(c => { if (c.wordAuto) exportWord(false, true); }).catch(() => {});
+  if (!r.ok) offerMissingPackages((r.log || '') + '\n' + (r.output || '') + '\n' + (r.issues || []).map(i => i.message).join('\n'));
   if (compile.again) compile();
+}
+// When a compile stops because a package is missing, offer to install it and compile again.
+function offerMissingPackages(text) {
+  const names = [...new Set([...text.matchAll(/(?:File `|unable to locate file "|file ')([A-Za-z0-9-]+)\.sty/g)].map(m => m[1]))];
+  if (!names.length || S.pkgOffered === names.join()) return;
+  S.pkgOffered = names.join();
+  const c = modal(`<h2>Package needed</h2>
+    <p>This document uses ${names.length > 1 ? 'packages' : 'a package'} that ${names.length > 1 ? 'are' : 'is'} not on this PC yet: <b>${names.map(esc).join(', ')}</b>.</p>
+    <p class="muted small">Datex can download ${names.length > 1 ? 'them' : 'it'} now (internet needed this once) and compile again.</p>
+    <pre id="mpOut" class="mono small hidden" style="max-height:160px;overflow:auto;white-space:pre-wrap;background:var(--bg3);padding:8px;border-radius:6px"></pre>
+    <div class="modal-actions"><button class="btn" id="mpNo">Not now</button><button class="btn primary" id="mpGo">Install and compile</button></div>`);
+  const o = c.querySelector('#mpOut');
+  closeModal.onClose = window.datex.onTexProgress(tx => { o.textContent += tx; o.scrollTop = o.scrollHeight; });
+  c.querySelector('#mpNo').onclick = closeModal;
+  c.querySelector('#mpGo').onclick = async () => {
+    const b = c.querySelector('#mpGo'); b.disabled = true; b.textContent = 'Installing...'; o.classList.remove('hidden');
+    try { await api('tex:install', names.join(',')); closeModal(); toast('Installed ' + names.join(', ')); S.pkgOffered = ''; compile(); }
+    catch (e) { o.textContent += '\n' + e.message + '\nCheck the internet connection and try again.'; b.disabled = false; b.textContent = 'Try again'; }
+  };
 }
 function setIssues(list) {
   S.issues = list;
@@ -807,7 +832,7 @@ async function aiPanel(el) {
     <textarea id="aiIn" rows="3" placeholder="Ask anything about LaTeX or your document. Ctrl+Enter to send."></textarea>
     <div class="row"><button class="btn ai" id="aiSend">Send</button><button class="btn ghost" id="aiStop">Stop</button><button class="btn ghost" id="aiClear">New chat</button></div>
     <p class="muted small">Runs on this computer with local models. Your document never leaves your PC.</p>`;
-  if (!models.length) el.querySelector('#aiLog').innerHTML = '<div class="card">Local AI is not available. Install <a href="#" data-link="https://ollama.com">Ollama</a>, then pull a model (for example <span class="mono">ollama pull qwen2.5:7b</span>).</div>';
+  if (!models.length) el.querySelector('#aiLog').innerHTML = '<div class="card">The AI assistant is optional and is not set up on this PC. Everything else in Datex works without it. To use AI, install <a href="#" data-link="https://ollama.com">Ollama</a>, then pull a model (for example <span class="mono">ollama pull qwen2.5:7b</span>).</div>';
   el.querySelector('#aiModel').onchange = e => api('settings:set', { aiModel: e.target.value }).then(s => settings = s);
   el.querySelector('.chips').onclick = e => { const i = e.target.dataset.a; if (i !== undefined) runAction(AI_ACTIONS[i], el); };
   el.querySelector('#aiSend').onclick = () => { const v = el.querySelector('#aiIn').value.trim(); if (v) { el.querySelector('#aiIn').value = ''; aiAsk(el, v, v); } };
@@ -1036,7 +1061,7 @@ $x^2 + y_1$               Inline math
 
 // ---------------- Commands & wiring ----------------
 const CMDS = {
-  newProject, exportWord: () => exportWord(false), exportWordAs: () => exportWord(true), joinSession: () => live.joinDialog(), packages: () => packagesDialog(), cloneRepo: () => cloneRepo(), openProject: openFolder, dashboard: showDashboard, settings: settingsDialog, about: aboutDialog, guide: guideDialog,
+  newProject, exportWord: () => exportWord(false), exportWordAs: () => exportWord(true), joinSession: () => live.joinDialog(), packages: () => packagesDialog(), cloneRepo: () => cloneRepo(), openProject: openFolder, importZip: () => importZip(), dashboard: showDashboard, settings: settingsDialog, about: aboutDialog, guide: guideDialog,
   save: () => saveAll().then(() => toast('Saved')), compile: () => compile(),
   stop: () => api('compile:stop', S.root), clean: async () => { await api('compile:clean', S.root); toast('Build files cleared'); },
   syncForward, zoomIn: () => zoomStep(1), zoomOut: () => zoomStep(-1),

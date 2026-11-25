@@ -101,6 +101,7 @@ function buildMenu() {
     { label: 'File', submenu: [
       { label: 'New Project...', accelerator: 'Ctrl+Shift+N', click: cmd('newProject') },
       { label: 'Open Project Folder...', accelerator: 'Ctrl+Shift+O', click: cmd('openProject') },
+      { label: 'Import Project from ZIP...', click: cmd('importZip') },
       { label: 'Project Dashboard', accelerator: 'Ctrl+Shift+D', click: cmd('dashboard') },
       { type: 'separator' },
       { label: 'Save', accelerator: 'Ctrl+S', click: cmd('save') },
@@ -468,6 +469,42 @@ handle('project:create', createProject);
 handle('project:pick', async () => {
   const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: 'Open a LaTeX project folder' });
   return r.canceled ? null : r.filePaths[0];
+});
+// Import a project from a .zip file (for example one downloaded from Overleaf).
+handle('project:importZip', async (zipPath) => {
+  if (!zipPath) {
+    const r = await dialog.showOpenDialog(win, { title: 'Import a LaTeX project from a ZIP file', filters: [{ name: 'ZIP files', extensions: ['zip'] }], properties: ['openFile'] });
+    if (r.canceled) return null;
+    zipPath = r.filePaths[0];
+  }
+  const base = path.basename(zipPath).replace(/\.zip$/i, '').replace(/[<>:"/\\|?*]+/g, ' ').trim() || 'Imported project';
+  await fsp.mkdir(settings.projectsDir, { recursive: true });
+  let dir = path.join(settings.projectsDir, base);
+  for (let n = 2; fs.existsSync(dir); n++) dir = path.join(settings.projectsDir, `${base} (${n})`);
+  const tmp = dir + '.importing';
+  await fsp.rm(tmp, { recursive: true, force: true });
+  await fsp.mkdir(tmp, { recursive: true });
+  // Windows' own tar.exe reads ZIP files and refuses paths that would land outside the target folder.
+  const t = await run(path.join(process.env.SystemRoot || 'C:/Windows', 'System32', 'tar.exe'), ['-x', '-f', zipPath, '-C', tmp]);
+  if (!t.ok) { await fsp.rm(tmp, { recursive: true, force: true }); throw new Error('Could not open the ZIP file. It may be damaged.'); }
+  await fsp.rm(path.join(tmp, '__MACOSX'), { recursive: true, force: true });
+  // If the ZIP holds a single folder, use that folder as the project.
+  let src = tmp;
+  for (;;) {
+    const items = (await fsp.readdir(src, { withFileTypes: true })).filter(d => !/^\.DS_Store$/.test(d.name));
+    if (items.length === 1 && items[0].isDirectory()) src = path.join(src, items[0].name); else break;
+  }
+  const texes = (await fsp.readdir(src)).filter(f => /\.tex$/i.test(f));
+  if (!texes.length) { await fsp.rm(tmp, { recursive: true, force: true }); throw new Error('No .tex file was found in this ZIP, so it does not look like a LaTeX project.'); }
+  await fsp.rename(src, dir);
+  await fsp.rm(tmp, { recursive: true, force: true });
+  // Choose the main file: main.tex first, then any file with \documentclass.
+  let main = null;
+  for (const f of texes.sort((a, b) => (b.toLowerCase() === 'main.tex') - (a.toLowerCase() === 'main.tex'))) {
+    if (/\\documentclass/.test(await fsp.readFile(path.join(dir, f), 'utf8'))) { main = f; break; }
+  }
+  if (main) await saveProjectConfig(dir, { ...(await projectConfig(dir)), main });
+  return dir;
 });
 handle('project:open', async (dir) => {
   if (!fs.existsSync(dir)) throw new Error('Folder not found');
