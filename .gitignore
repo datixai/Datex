@@ -4,3 +4,6 @@ bin/
 tex-cache/
 *.log
 docs/Datex-Documentation/
+marketing/reel/work/demo-paper/
+marketing/reel/work/ud/
+__pycache__/
