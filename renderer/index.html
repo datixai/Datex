@@ -31,6 +31,7 @@
       <button class="btn" data-cmd="joinSession">Join Live Session</button>
       <button class="btn" data-cmd="cloneRepo">Clone from GitHub</button>
       <button class="btn ghost" data-cmd="packages">TeX Packages</button>
+      <button class="btn ghost theme-btn" data-cmd="toggleTheme" title="Switch light / dark mode"></button>
       <button class="btn ghost" data-cmd="settings">Settings</button>
     </div>
   </header>
@@ -48,16 +49,14 @@
   <header class="topbar">
     <button class="icon-btn" data-cmd="dashboard" title="All projects">&#8962;</button>
     <img src="assets/datex-icon.png" class="app-logo" alt="">
-    <span class="wordmark">Datex</span>
-    <span class="crumb">/</span>
-    <strong id="projName" class="proj-name"></strong>
+        <strong id="projName" class="proj-name"></strong>
     <div class="spacer"></div>
-    <label class="tb-label">Main <select id="mainSel"></select></label>
-    <label class="tb-label">Engine <select id="engineSel"><option value="auto">Auto</option><option value="builtin">Built-in (Datex TeX)</option><option value="pdflatex">pdfLaTeX</option><option value="xelatex">XeLaTeX</option><option value="lualatex">LuaLaTeX</option></select></label>
+    <label class="tb-label" title="Main file (the document that is compiled)"><select id="mainSel"></select></label>
+    <label class="tb-label" title="TeX engine (keep Auto)"><select id="engineSel"><option value="auto">Auto</option><option value="builtin">Built-in (Datex TeX)</option><option value="pdflatex">pdfLaTeX</option><option value="xelatex">XeLaTeX</option><option value="lualatex">LuaLaTeX</option></select></label>
     <div class="compile-group">
       <button id="compileBtn" class="btn primary" data-cmd="compile">&#9654; Recompile</button>
       <label class="auto" title="Compile automatically after you stop typing"><input type="checkbox" id="autoChk"> Auto</label>
-      <label class="auto" title="Draft mode: compile only the chapter file you are editing, so long documents build in seconds. Untick to build the whole document."><input type="checkbox" id="draftChk"> This chapter only</label>
+      <label class="auto" title="Draft mode: compile only the chapter file you are editing, so long documents build in seconds. Untick to build the whole document."><input type="checkbox" id="draftChk"> Chapter only</label>
       <button id="wordBtn" class="btn word-btn" data-cmd="wordMenu" title="Word: export this project to .docx, or convert a Word file to LaTeX"><b>W</b> Word &#9662;</button>
     </div>
     <div class="spacer"></div>
@@ -71,6 +70,7 @@
     <button class="tool-btn" data-panel="git" title="Git and GitHub sync">Git</button>
     <span id="peerDots" class="peer-dots"></span>
     <button class="tool-btn share" data-panel="share" title="Live co-editing">Share</button>
+    <button class="icon-btn theme-btn" data-cmd="toggleTheme" title="Switch light / dark mode"></button>
     <button class="icon-btn" data-cmd="settings" title="Settings">&#9881;</button>
   </header>
 

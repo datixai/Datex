@@ -60,6 +60,8 @@ const isDark = () => settings.theme === 'dark' || (settings.theme !== 'light' &&
 function applyTheme() {
   document.body.className = isDark() ? 'dark' : 'light';
   if (monaco) monaco.editor.setTheme(isDark() ? 'datex-dark' : 'datex-light');
+  // The switch shows what a click will change to.
+  for (const b of document.querySelectorAll('.theme-btn')) b.innerHTML = b.closest('.topbar') ? (isDark() ? '&#9728;' : '&#9790;') : (isDark() ? '&#9728; Light mode' : '&#9790; Dark mode');
 }
 systemDark.addEventListener('change', () => applyTheme());
 const fmtTime = t => new Date(t).toLocaleString();
@@ -1151,7 +1153,7 @@ $x^2 + y_1$               Inline math
 
 // ---------------- Commands & wiring ----------------
 const CMDS = {
-  newProject, exportWord: () => exportWord(false), wordMenu: () => wordMenu(), wordToLatex: () => wordToLatex(null, null), exportWordAs: () => exportWord(true), joinSession: () => live.joinDialog(), packages: () => packagesDialog(), cloneRepo: () => cloneRepo(), openProject: openFolder, importZip: () => importZip(), dashboard: showDashboard, settings: settingsDialog, about: aboutDialog, checkUpdates: () => { aboutDialog.check = true; aboutDialog(); }, guide: guideDialog,
+  newProject, exportWord: () => exportWord(false), wordMenu: () => wordMenu(), wordToLatex: () => wordToLatex(null, null), exportWordAs: () => exportWord(true), joinSession: () => live.joinDialog(), packages: () => packagesDialog(), cloneRepo: () => cloneRepo(), openProject: openFolder, importZip: () => importZip(), dashboard: showDashboard, settings: settingsDialog, about: aboutDialog, toggleTheme: async () => { settings = await api('settings:set', { theme: isDark() ? 'light' : 'dark' }); applyTheme(); }, checkUpdates: () => { aboutDialog.check = true; aboutDialog(); }, guide: guideDialog,
   save: () => saveAll().then(() => toast('Saved')), compile: () => compile(),
   stop: () => api('compile:stop', S.root), clean: async () => { await api('compile:clean', S.root); toast('Build files cleared'); },
   syncForward, zoomIn: () => zoomStep(1), zoomOut: () => zoomStep(-1),

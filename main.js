@@ -112,6 +112,7 @@ function buildMenu() {
       { label: 'Export Project as ZIP...', click: cmd('exportZip') },
       { type: 'separator' },
       { label: 'Settings', accelerator: 'Ctrl+,', click: cmd('settings') },
+      { label: 'Switch Light / Dark Mode', accelerator: 'Ctrl+Shift+L', click: cmd('toggleTheme') },
       { role: 'quit' }
     ] },
     { label: 'Edit', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },
