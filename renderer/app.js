@@ -341,6 +341,7 @@ function treeEvents() {
     const p = n.dataset.path, isDir = !!n.dataset.dir;
     ctxMenu(e.clientX, e.clientY, [
       !isDir && /\.tex$/i.test(p) && ['Set as main document', () => setMain(p)],
+      !isDir && /\.docx$/i.test(p) && ['Convert to LaTeX', () => wordToLatex(S.root + '/' + p, S.root)],
       isDir && ['New file here', () => newFile(p)],
       ['Rename', () => renameNode(p)],
       ['Delete (Recycle Bin)', () => deleteNode(p)]
@@ -353,6 +354,43 @@ function ctxMenu(x, y, items) {
   for (const [label, fn] of items) { const d = document.createElement('div'); d.textContent = label; d.onclick = () => { m.remove(); fn(); }; m.appendChild(d); }
   document.body.appendChild(m);
   setTimeout(() => document.addEventListener('click', () => m.remove(), { once: true }), 0);
+}
+// ---------------- Word to LaTeX ----------------
+function wordMenu() {
+  const b = $('#wordBtn').getBoundingClientRect();
+  ctxMenu(b.left, b.bottom + 4, [
+    ['Export this project to Word (.docx)', () => exportWord(false)],
+    ['Export to Word as...', () => exportWord(true)],
+    ['Convert a Word file to a new LaTeX project...', () => wordToLatex(null, null)],
+    ['Add a Word file to this project as LaTeX...', () => wordToLatex(null, S.root)]
+  ]);
+}
+function offerWordFile(rel) {
+  const c = modal(`<h2>Word document</h2><p><b>${esc(rel)}</b> is a Word file. Datex can turn it into LaTeX: headings, lists, tables, images, equations, links and footnotes are kept.</p>
+    <div class="modal-actions"><button class="btn" id="owNo">Cancel</button><button class="btn" id="owNew">Convert to a new project</button><button class="btn primary" id="owHere">Convert into this project</button></div>`);
+  c.querySelector('#owNo').onclick = closeModal;
+  c.querySelector('#owNew').onclick = () => { closeModal(); wordToLatex(S.root + '/' + rel, null); };
+  c.querySelector('#owHere').onclick = () => { closeModal(); wordToLatex(S.root + '/' + rel, S.root); };
+}
+async function wordToLatex(docx, into) {
+  status('Converting Word to LaTeX...');
+  let r;
+  try { r = await api('word:toLatex', docx, into); } catch (e) { status('Ready'); return toast(e.message, true); }
+  if (!r) return status('Ready');
+  const note = r.warnings.length ? ` ${r.warnings.length} image(s) are in a Word-only format and are marked in the text.` : '';
+  if (r.newProject) {
+    if (S.root) await showDashboard();
+    await openProject(r.dir);
+    toast('Converted to LaTeX' + (r.images ? `, ${r.images} image(s)` : '') + '.' + note, !!note);
+    compile();
+  } else {
+    await refreshTree(); await openFile(r.tex);
+    const c = modal(`<h2>Converted to LaTeX</h2><p>Saved as <b>${esc(r.tex)}</b>${r.images ? ` with ${r.images} image(s)` : ''}. It is a complete document with its own preamble.${esc(note)}</p>
+      <div class="modal-actions"><button class="btn" id="wcKeep">Keep current main file</button><button class="btn primary" id="wcMain">Make it the main document and compile</button></div>`);
+    c.querySelector('#wcKeep').onclick = closeModal;
+    c.querySelector('#wcMain').onclick = () => { closeModal(); setMain(r.tex); };
+    status('Ready');
+  }
 }
 async function setMain(p) { S.main = p; await api('project:config', S.root, { main: p }); renderTree(); renderMainSel(); compile(); }
 async function newFile(dir = '') {
@@ -388,7 +426,8 @@ async function openFile(rel, line) {
   if (!rel) return;
   if (IMG_EXT.test(rel)) return showImage(rel);
   if (/\.pdf$/i.test(rel)) return toast('PDF files are shown when you include them in your document');
-  if (/\.(zip|docx?|xlsx?|pptx?|exe|gz|eps|ttf|otf|woff2?)$/i.test(rel)) return toast('This file type cannot be edited in Datex');
+  if (/\.docx$/i.test(rel)) return offerWordFile(rel);
+  if (/\.(zip|doc|xlsx?|pptx?|exe|gz|eps|ttf|otf|woff2?)$/i.test(rel)) return toast('This file type cannot be edited in Datex');
   $('#imageView').classList.add('hidden'); $('#editor').classList.remove('hidden');
   let f = S.files.get(rel);
   if (!f) {
@@ -441,8 +480,12 @@ function renderOutline() {
   const lvl = { part: 0, chapter: 0, section: 1, subsection: 2, subsubsection: 3, paragraph: 4 };
   const items = [];
   f.model.getLinesContent().forEach((l, i) => {
-    const m = l.match(/^\s*\\(part|chapter|section|subsection|subsubsection|paragraph)\*?\{(.*)\}/);
-    if (m) items.push({ d: lvl[m[1]], t: m[2], line: i + 1 });
+    const m = l.match(/^\s*\\(part|chapter|section|subsection|subsubsection|paragraph)\*?(?:\[[^\]]*\])?\{/);
+    if (!m) return;
+    // Title is the balanced {...} group, so a \label after it on the same line is not shown.
+    let d = 1, j = m[0].length;
+    for (; j < l.length && d; j++) { if (l[j] === '\\') { j++; continue; } if (l[j] === '{') d++; else if (l[j] === '}') d--; }
+    items.push({ d: lvl[m[1]], t: l.slice(m[0].length, d ? l.length : j - 1), line: i + 1 });
   });
   $('#outline').innerHTML = items.map(x => `<div class="node" data-line="${x.line}" style="padding-left:${8 + x.d * 12}px">${esc(x.t)}</div>`).join('') || '<div class="node muted">No sections</div>';
   $('#outline').onclick = e => { const n = e.target.closest('[data-line]'); if (n) { editor.revealLineInCenter(+n.dataset.line); editor.setPosition({ lineNumber: +n.dataset.line, column: 1 }); editor.focus(); } };
@@ -1085,7 +1128,7 @@ $x^2 + y_1$               Inline math
 
 // ---------------- Commands & wiring ----------------
 const CMDS = {
-  newProject, exportWord: () => exportWord(false), exportWordAs: () => exportWord(true), joinSession: () => live.joinDialog(), packages: () => packagesDialog(), cloneRepo: () => cloneRepo(), openProject: openFolder, importZip: () => importZip(), dashboard: showDashboard, settings: settingsDialog, about: aboutDialog, guide: guideDialog,
+  newProject, exportWord: () => exportWord(false), wordMenu: () => wordMenu(), wordToLatex: () => wordToLatex(null, null), exportWordAs: () => exportWord(true), joinSession: () => live.joinDialog(), packages: () => packagesDialog(), cloneRepo: () => cloneRepo(), openProject: openFolder, importZip: () => importZip(), dashboard: showDashboard, settings: settingsDialog, about: aboutDialog, guide: guideDialog,
   save: () => saveAll().then(() => toast('Saved')), compile: () => compile(),
   stop: () => api('compile:stop', S.root), clean: async () => { await api('compile:clean', S.root); toast('Build files cleared'); },
   syncForward, zoomIn: () => zoomStep(1), zoomOut: () => zoomStep(-1),

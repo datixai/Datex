@@ -107,6 +107,7 @@ function buildMenu() {
       { label: 'Save', accelerator: 'Ctrl+S', click: cmd('save') },
       { label: 'Export PDF...', accelerator: 'Ctrl+Shift+E', click: cmd('exportPdf') },
       { label: 'Export Word Document (.docx)', accelerator: 'Ctrl+Shift+W', click: cmd('exportWord') },
+      { label: 'Convert Word File to LaTeX...', click: cmd('wordToLatex') },
       { label: 'Export Word Document As...', click: cmd('exportWordAs') },
       { label: 'Export Project as ZIP...', click: cmd('exportZip') },
       { type: 'separator' },
@@ -732,6 +733,59 @@ handle('word:export', async (root, main, pick) => {
     if (r.canceled) return null; out = r.filePath;
   }
   return exportWord(root, main, out);
+});
+// ---------- Word to LaTeX (.docx to a .tex project with Pandoc) ----------
+// intoRoot given: the .tex goes into that project next to its other files.
+// Otherwise a new project is made in the projects folder with the Word file's name.
+handle('word:toLatex', async (docx, intoRoot) => {
+  if (!docx) {
+    const r = await dialog.showOpenDialog(win, { title: 'Convert a Word document to LaTeX', filters: [{ name: 'Word documents', extensions: ['docx'] }], properties: ['openFile'] });
+    if (r.canceled) return null;
+    docx = r.filePaths[0];
+  }
+  if (!/\.docx$/i.test(docx)) throw new Error('Choose a .docx file. Older .doc files must first be saved as .docx in Word (File, Save As).');
+  if (!fs.existsSync(pandocExe())) throw new Error('The Word converter is missing. Reinstall Datex.');
+  const base = path.basename(docx).replace(/\.docx$/i, '');
+  const slug = base.replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || 'document';
+  let dir, tex, media;
+  if (intoRoot) {
+    dir = intoRoot; tex = slug + '.tex'; media = slug + '_media';
+    for (let n = 2; fs.existsSync(path.join(dir, tex)); n++) { tex = `${slug}_${n}.tex`; media = `${slug}_${n}_media`; }
+  } else {
+    await fsp.mkdir(settings.projectsDir, { recursive: true });
+    const nm = base.replace(/[<>:"/\\|?*]+/g, ' ').trim() || 'Converted document';
+    dir = path.join(settings.projectsDir, nm);
+    for (let n = 2; fs.existsSync(dir); n++) dir = path.join(settings.projectsDir, `${nm} (${n})`);
+    await fsp.mkdir(dir, { recursive: true });
+    tex = 'main.tex'; media = 'images';
+  }
+  // Pandoc writes media/<file> under --extract-media; work in a temp folder, then move into place.
+  const tmp = path.join(app.getPath('temp'), 'datex-w2l-' + Date.now());
+  await fsp.mkdir(tmp, { recursive: true });
+  const args = [docx, '-f', 'docx', '-t', 'latex', '-s', '--wrap=none', '--track-changes=accept',
+    '--extract-media=.', '-V', 'documentclass=article', '-V', 'geometry:margin=1in', '-V', 'colorlinks=true', '-o', 'out.tex'];
+  const r = await new Promise(res => execFile(pandocExe(), args, { cwd: tmp, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, so, se) => res({ ok: !err, err: String(se || (err && err.message) || '') })));
+  if (!r.ok) { await fsp.rm(tmp, { recursive: true, force: true }); if (!intoRoot) await fsp.rm(dir, { recursive: true, force: true }); throw new Error('Could not convert the Word file: ' + r.err.split('\n')[0]); }
+  let body = await fsp.readFile(path.join(tmp, 'out.tex'), 'utf8');
+  const warnings = [];
+  body = body.replace(/\\documentclass\[\s*\]/, '\\documentclass')
+    // A Word table of contents arrives as a bare "Contents" heading: make it a real LaTeX one.
+    .replace(/\\section\*?\{(?:Contents|Table of Contents|TABLE OF CONTENTS)\}(?:\\label\{[^}]*\})?/, '\\tableofcontents\n\\clearpage')
+    .replace(/^(?:Right-click here and choose Update Field[^\r\n]*|No table of contents entries found\.?)\r?\n/m, '')
+    .replace(/^% Options for packages loaded elsewhere\r?\n/m, `% Converted from ${path.basename(docx).replace(/[%\\{}]/g, '')} by Datex\n`);
+  if (fs.existsSync(path.join(tmp, 'media'))) {
+    await fsp.cp(path.join(tmp, 'media'), path.join(dir, media), { recursive: true });
+    body = body.split('{media/').join('{' + media + '/').split('{./media/').join('{' + media + '/');
+  }
+  // Windows drawing formats (EMF, WMF) and TIFF cannot go into a PDF: leave a visible note instead.
+  body = body.replace(/(?:\\pandocbounded\{)?\\includegraphics(\[[^\]]*\])?\{([^}]+\.(?:emf|wmf|tif|tiff))\}\}?/gi, (m, o, f) => {
+    warnings.push(f);
+    return `\\fbox{\\parbox{0.8\\linewidth}{\\centering Image \\texttt{${f.replace(/_/g, '\\_')}} is in a Word-only format. Save it as PNG, upload it and replace this box.}}`;
+  });
+  await fsp.writeFile(path.join(dir, tex), body);
+  await fsp.rm(tmp, { recursive: true, force: true });
+  if (!intoRoot) await saveProjectConfig(dir, { ...(await projectConfig(dir)), main: tex, engine: 'auto' });
+  return { dir, tex, images: fs.existsSync(path.join(dir, media)) ? (await fsp.readdir(path.join(dir, media))).length : 0, warnings, newProject: !intoRoot };
 });
 handle('file:open', async (f) => { const e = await shell.openPath(f); if (e) throw new Error(e); });
 handle('file:reveal', async (f) => shell.showItemInFolder(f));

@@ -27,6 +27,7 @@
       <button class="btn primary" data-cmd="newProject">+ New Project</button>
       <button class="btn" data-cmd="openProject">Open Folder</button>
       <button class="btn" data-cmd="importZip" title="Open a LaTeX project from a .zip file, for example one downloaded from Overleaf">Import ZIP</button>
+      <button class="btn" data-cmd="wordToLatex" title="Turn a Word document (.docx) into a LaTeX project">Word to LaTeX</button>
       <button class="btn" data-cmd="joinSession">Join Live Session</button>
       <button class="btn" data-cmd="cloneRepo">Clone from GitHub</button>
       <button class="btn ghost" data-cmd="packages">TeX Packages</button>
@@ -56,7 +57,7 @@
     <div class="compile-group">
       <button id="compileBtn" class="btn primary" data-cmd="compile">&#9654; Recompile</button>
       <label class="auto" title="Compile automatically after you stop typing"><input type="checkbox" id="autoChk"> Auto</label>
-      <button id="wordBtn" class="btn word-btn" data-cmd="exportWord" title="Make a Word document (.docx) from this LaTeX project, for people who do not use LaTeX"><b>W</b> Word</button>
+      <button id="wordBtn" class="btn word-btn" data-cmd="wordMenu" title="Word: export this project to .docx, or convert a Word file to LaTeX"><b>W</b> Word &#9662;</button>
     </div>
     <div class="spacer"></div>
     <button class="tool-btn" data-panel="review" title="Track changes">Review</button>
