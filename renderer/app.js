@@ -527,26 +527,35 @@ async function compile() {
   if (r.pdf && r.fresh !== false) { try { await loadPdf(r.pdf); } catch (e) { toast('Could not show PDF: ' + e.message, true); } }
   else if (!r.pdf) { $('#pdfView').innerHTML = '<div class="pdf-empty">No PDF was produced. Open Logs to see what went wrong.</div>'; $('#logs').classList.remove('hidden'); }
   if (r.ok && r.pdf) api('project:config', S.root, {}).then(c => { if (c.wordAuto) exportWord(false, true); }).catch(() => {});
-  if (!r.ok) offerMissingPackages((r.log || '') + '\n' + (r.output || '') + '\n' + (r.issues || []).map(i => i.message).join('\n'));
+  if (!r.ok) offerMissingPackages((r.log || '') + '\n' + (r.output || '') + '\n' + (r.issues || []).map(i => i.message).join('\n'), r.engine);
   if (compile.again) compile();
 }
-// When a compile stops because a package is missing, offer to install it and compile again.
-function offerMissingPackages(text) {
-  const names = [...new Set([...text.matchAll(/(?:File `|unable to locate file "|file ')([A-Za-z0-9-]+)\.sty/g)].map(m => m[1]))];
-  if (!names.length || S.pkgOffered === names.join()) return;
-  S.pkgOffered = names.join();
-  const c = modal(`<h2>Package needed</h2>
-    <p>This document uses ${names.length > 1 ? 'packages' : 'a package'} that ${names.length > 1 ? 'are' : 'is'} not on this PC yet: <b>${names.map(esc).join(', ')}</b>.</p>
-    <p class="muted small">Datex can download ${names.length > 1 ? 'them' : 'it'} now (internet needed this once) and compile again.</p>
+// When a compile stops because a package is missing, offer to install every package the
+// project uses in one click, then compile again with Datex TeX (which can fetch packages itself).
+async function offerMissingPackages(text, engine) {
+  const missing = [...new Set([...text.matchAll(/(?:File `|unable to locate file "|file ')([A-Za-z0-9-]+)\.sty/g)].map(m => m[1]))];
+  if (!missing.length || S.pkgOffered === missing.join()) return;
+  S.pkgOffered = missing.join();
+  const used = await api('tex:scan', S.root).catch(() => []);
+  const names = [...new Set([...missing, ...used])];
+  const system = engine && engine !== 'builtin';
+  const c = modal(`<h2>Packages needed</h2>
+    <p>This document needs <b>${missing.map(esc).join(', ')}</b>, which ${missing.length > 1 ? 'are' : 'is'} not on this PC yet.</p>
+    <p class="muted small">One click installs all ${names.length} packages this project uses (internet needed this once), then compiles again.${system ? ' The project will switch to the Auto engine (Datex TeX), which installs packages by itself from now on.' : ''}</p>
     <pre id="mpOut" class="mono small hidden" style="max-height:160px;overflow:auto;white-space:pre-wrap;background:var(--bg3);padding:8px;border-radius:6px"></pre>
-    <div class="modal-actions"><button class="btn" id="mpNo">Not now</button><button class="btn primary" id="mpGo">Install and compile</button></div>`);
+    <div class="modal-actions"><button class="btn" id="mpNo">Not now</button><button class="btn primary" id="mpGo">Install all and compile</button></div>`);
   const o = c.querySelector('#mpOut');
   closeModal.onClose = window.datex.onTexProgress(tx => { o.textContent += tx; o.scrollTop = o.scrollHeight; });
   c.querySelector('#mpNo').onclick = closeModal;
   c.querySelector('#mpGo').onclick = async () => {
     const b = c.querySelector('#mpGo'); b.disabled = true; b.textContent = 'Installing...'; o.classList.remove('hidden');
-    try { await api('tex:install', names.join(',')); closeModal(); toast('Installed ' + names.join(', ')); S.pkgOffered = ''; compile(); }
-    catch (e) { o.textContent += '\n' + e.message + '\nCheck the internet connection and try again.'; b.disabled = false; b.textContent = 'Try again'; }
+    try {
+      const r = await api('tex:install', names);
+      if (system) { S.engine = 'auto'; $('#engineSel').value = 'auto'; await api('project:config', S.root, { engine: 'auto' }); }
+      closeModal(); S.pkgOffered = '';
+      toast(`Installed ${r.installed.length} package(s)` + (r.failed.length ? `. Not found: ${r.failed.join(', ')}` : ''), !!r.failed.length);
+      compile();
+    } catch (e) { o.textContent += '\n' + e.message; b.disabled = false; b.textContent = 'Try again'; }
   };
 }
 function setIssues(list) {
@@ -1010,10 +1019,25 @@ async function packagesDialog() {
   c.querySelector('#pkClose').onclick = closeModal;
   c.querySelector('#pkGo').onclick = async () => {
     show(); o.textContent = 'Installing...\n';
-    try { const l = await api('tex:install', c.querySelector('#pkNames').value); o.textContent += '\nInstalled: ' + l.join(', ') + '\n'; toast('Packages installed'); }
+    try { const l = await api('tex:install', c.querySelector('#pkNames').value); o.textContent += '\nInstalled: ' + l.installed.join(', ') + (l.failed.length ? '\nNot found: ' + l.failed.join(', ') : '') + '\n'; toast('Packages installed'); }
     catch (e) { o.textContent += '\n' + e.message + '\n'; }
   };
   c.querySelector('#pkCommon').onclick = async () => { show(); o.textContent = 'Starting...\n'; try { await api('tex:downloadAll'); } catch (e) { o.textContent += e.message; } };
+  if (S.root) {
+    // One click: every package the open project uses.
+    const pb = document.createElement('button'); pb.className = 'btn primary'; pb.textContent = 'Install everything this project needs';
+    c.querySelector('#pkCommon').before(pb);
+    pb.onclick = async () => {
+      show(); pb.disabled = true; o.textContent = 'Reading the project...\n';
+      try {
+        const names = await api('tex:scan', S.root);
+        if (!names.length) { o.textContent += 'This project does not load any packages.\n'; return; }
+        o.textContent += 'Installing ' + names.length + ' packages: ' + names.join(', ') + '\n';
+        const l = await api('tex:install', names);
+        o.textContent += '\nDone. Installed ' + l.installed.length + ' package(s).' + (l.failed.length ? '\nNot found: ' + l.failed.join(', ') : '') + '\n'; toast('Project packages installed');
+      } catch (e) { o.textContent += '\n' + e.message + '\n'; } finally { pb.disabled = false; }
+    };
+  }
 }
 // Word export: the same LaTeX project as an editable Word document, for readers who do not use LaTeX.
 async function exportWord(pick, quiet) {

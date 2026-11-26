@@ -611,14 +611,12 @@ handle('tex:info', async () => {
   return { ...t, cacheDir: texCacheDir(), cacheMB: Math.round(dirSize(texCacheDir()) / 1e6) };
 });
 // Install packages by name: the built-in engine fetches whatever a tiny document needs.
-handle('tex:install', async (names) => {
-  const list = String(names).split(/[\s,]+/).map(s => s.trim()).filter(n => /^[A-Za-z0-9-]+$/.test(n));
-  if (!list.length) throw new Error('Enter one or more package names, for example: tikz, siunitx');
-  if (!fs.existsSync(tectonicExe())) throw new Error('The built-in engine is missing. Reinstall Datex.');
-  await seedTexCache();
-  const tmp = path.join(app.getPath('temp'), 'datex-pkg-' + Date.now());
+// All packages in one go first; if that run stops early, each package on its own, so one bad
+// package never blocks the rest. A package counts as failed only when its file could not be found.
+async function texFetch(list, cls = 'article') {
+  const tmp = path.join(app.getPath('temp'), 'datex-pkg-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6));
   await fsp.mkdir(tmp, { recursive: true });
-  await fsp.writeFile(path.join(tmp, 'p.tex'), `\\documentclass{article}\n\\usepackage{${list.join(',')}}\n\\begin{document}\nok\n\\end{document}\n`);
+  await fsp.writeFile(path.join(tmp, 'p.tex'), `\\documentclass{${cls}}\n${list.map(n => `\\usepackage{${n}}`).join('\n')}\n\\begin{document}\nok\n\\end{document}\n`);
   const r = await new Promise(res => {
     const c = spawn(tectonicExe(), ['-X', 'compile', 'p.tex'], { cwd: tmp, windowsHide: true, env: { ...process.env, TECTONIC_CACHE_DIR: texCacheDir() } });
     let out = '';
@@ -627,11 +625,45 @@ handle('tex:install', async (names) => {
     c.on('close', code => res({ code, out }));
   });
   await fsp.rm(tmp, { recursive: true, force: true });
-  if (r.code !== 0) {
-    const missing = (r.out.match(/File `([^']+)' not found|unable to locate file "([^"]+)"/) || []);
-    throw new Error('Could not install: ' + (missing[1] || missing[2] || 'see the log above'));
+  const notFound = [...r.out.matchAll(/File `([^']+?)\.(?:sty|cls)' not found|unable to locate file "([^"]+?)\.(?:sty|cls)"/g)].map(m => m[1] || m[2]);
+  return { ok: r.code === 0, notFound, out: r.out };
+}
+handle('tex:install', async (names) => {
+  const list = [...new Set((Array.isArray(names) ? names : String(names).split(/[\s,]+/)).map(s => String(s).trim()).filter(n => /^[A-Za-z0-9-]+$/.test(n)))];
+  if (!list.length) throw new Error('Enter one or more package names, for example: tikz, siunitx');
+  if (!fs.existsSync(tectonicExe())) throw new Error('The built-in engine is missing. Reinstall Datex.');
+  await seedTexCache();
+  const failed = new Set();
+  const all = await texFetch(list);
+  if (!all.ok) {
+    if (/Failed to connect|Could not resolve|error sending request|network|dns error/i.test(all.out) && all.notFound.length) throw new Error('No internet connection. Connect to the internet once so Datex can download the packages.');
+    for (const n of list) {
+      send('tex:progress', `\nChecking ${n}...\n`);
+      const one = await texFetch([n]);
+      if (one.notFound.includes(n)) failed.add(n);
+    }
   }
-  return list;
+  const installed = list.filter(n => !failed.has(n));
+  if (!installed.length) throw new Error('Could not install: ' + [...failed].join(', ') + '. Check the names and the internet connection.');
+  return { installed, failed: [...failed] };
+});
+// Every package a project uses (\usepackage, \RequirePackage), minus the project's own .sty files.
+handle('tex:scan', async (root) => {
+  const pk = new Set(), own = new Set();
+  const walk = async (dir, depth) => {
+    for (const d of await fsp.readdir(dir, { withFileTypes: true })) {
+      if (d.name.startsWith('.') || d.name === 'node_modules') continue;
+      const f = path.join(dir, d.name);
+      if (d.isDirectory()) { if (depth < 4) await walk(f, depth + 1); continue; }
+      if (/\.(sty|cls)$/i.test(d.name)) own.add(d.name.replace(/\.(sty|cls)$/i, ''));
+      if (!/\.(tex|sty|cls|ltx)$/i.test(d.name)) continue;
+      const t = (await fsp.readFile(f, 'utf8')).replace(/(^|[^\\])%.*$/gm, '$1');
+      for (const m of t.matchAll(/\\(?:usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g))
+        for (const n of m[1].split(',')) { const s = n.trim(); if (/^[A-Za-z0-9-]+$/.test(s)) pk.add(s); }
+    }
+  };
+  await walk(root, 0);
+  return [...pk].filter(n => !own.has(n)).sort();
 });
 
 // ---------- Word export (LaTeX to .docx with Pandoc) ----------
