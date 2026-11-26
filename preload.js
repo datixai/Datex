@@ -15,5 +15,6 @@ contextBridge.exposeInMainWorld('datex', {
   onCompileOutput: fn => on('compile:output', fn),
   onAiChunk: fn => on('ai:chunk', fn),
   onAiDone: fn => on('ai:done', fn),
-  onTexProgress: fn => on('tex:progress', fn)
+  onTexProgress: fn => on('tex:progress', fn),
+  onUpdate: fn => on('update:status', fn)
 });

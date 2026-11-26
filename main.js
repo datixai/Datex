@@ -140,6 +140,7 @@ function buildMenu() {
     { label: 'Help', submenu: [
       { label: 'LaTeX Quick Guide', click: cmd('guide') },
       { label: 'Visit datixai.com', click: () => shell.openExternal('https://datixai.com') },
+      { label: 'Check for Updates...', click: cmd('checkUpdates') },
       { label: 'About Datex', click: cmd('about') }
     ] }
   ]));
@@ -243,7 +244,7 @@ async function tree(root, rel = '') {
   const out = [];
   const entries = await fsp.readdir(inside(root, rel), { withFileTypes: true });
   for (const e of entries) {
-    if (e.name.startsWith('.') || e.name === 'node_modules') continue;
+    if (e.name.startsWith('.') || e.name === 'node_modules' || e.name === DRAFT) continue;
     const p = rel ? rel + '/' + e.name : e.name;
     if (e.isDirectory()) out.push({ name: e.name, path: p, dir: true, children: await tree(root, p) });
     else out.push({ name: e.name, path: p, dir: false });
@@ -275,9 +276,41 @@ async function resolveEngine(engine) {
   return engine;
 }
 
-function compile(root, main, requested) {
+// Draft mode: build a short document from the main file's preamble plus only the chapter being
+// edited, so a long thesis compiles in a few seconds. Chapter numbering continues from the
+// chapters before it, so headings and figure numbers match the full document.
+const DRAFT = '_datex_draft.tex';
+async function makeDraft(root, main, only) {
+  const src = await fsp.readFile(path.join(root, main), 'utf8');
+  const at = src.indexOf('\\begin{document}');
+  if (at < 0) throw new Error('The main file has no \\begin{document}.');
+  const pre = src.slice(0, at), body = src.slice(at).replace(/(^|[^\\])%.*$/gm, '$1');
+  const norm = f => f.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\.tex$/i, '');
+  const target = norm(only);
+  let chapters = 0, found = false;
+  for (const m of body.matchAll(/\\(include|input|subfile)\s*\{([^}]+)\}|\\chapter\s*(?:\[[^\]]*\])?\{/g)) {
+    if (!m[1]) { chapters++; continue; }
+    if (norm(m[2]) === target) { found = true; break; }
+    try { chapters += ((await fsp.readFile(path.join(root, norm(m[2]) + '.tex'), 'utf8')).replace(/(^|[^\\])%.*$/gm, '$1').match(/\\chapter\s*(?:\[[^\]]*\])?\{/g) || []).length; } catch {}
+  }
+  if (!found) return null;
+  const bib = (body.match(/^[ \t]*\\(?:bibliographystyle|bibliography|printbibliography)\b.*$/gm) || []).join('\n');
+  await fsp.writeFile(path.join(root, DRAFT), pre +
+    `\\begin{document}\n\\makeatletter\\@ifundefined{c@chapter}{}{\\setcounter{chapter}{${chapters}}}\\makeatother\n\\input{${target}}\n${bib}\n\\end{document}\n`);
+  return DRAFT;
+}
+handle('compile:draftable', async (root, main, only) => {
+  if (!only || only === main || !/\.tex$/i.test(only)) return false;
+  try { const d = await makeDraft(root, main, only); if (d) await fsp.rm(path.join(root, DRAFT), { force: true }); return !!d; } catch { return false; }
+});
+
+function compile(root, main, requested, only) {
   return new Promise(async resolve => {
     stopCompile(root);
+    let draftOf = null;
+    if (only && only !== main) {
+      try { const d = await makeDraft(root, main, only); if (d) { draftOf = only; main = d; } } catch {}
+    }
     const outdir = path.join(root, '.datex', 'build');
     fs.mkdirSync(outdir, { recursive: true });
     // \include{dir/file} writes dir/file.aux into the build folder, so mirror the project's folders there.
@@ -325,7 +358,11 @@ function compile(root, main, requested) {
         }
       }
       syncCache.delete(pdf);
-      resolve({ ok: code === 0, code, engine, pdf: fs.existsSync(pdf) ? pdf : null, fresh: pdfOk, issues, log, output, ms: Date.now() - t0 });
+      if (draftOf) {
+        await fsp.rm(path.join(root, DRAFT), { force: true }).catch(() => {});
+        for (const i of issues) if (i.file === main || i.file === './' + main) i.file = draftOf;
+      }
+      resolve({ ok: code === 0, code, engine, pdf: fs.existsSync(pdf) ? pdf : null, fresh: pdfOk, issues, log, output, ms: Date.now() - t0, draft: draftOf });
     });
   });
 }
@@ -548,7 +585,7 @@ handle('fs:search', async (root, q) => {
   };
   await walk(''); return res;
 });
-handle('compile:run', (root, main, engine) => compile(root, main, engine));
+handle('compile:run', (root, main, engine, only) => compile(root, main, engine, only));
 handle('compile:stop', async (root) => stopCompile(root));
 handle('compile:clean', async (root) => { await fsp.rm(path.join(root, '.datex', 'build'), { recursive: true, force: true }); });
 handle('pdf:export', async (src, name) => {
@@ -860,6 +897,33 @@ handle('fs:writeBase64', async (root, rel, b64) => { const f = inside(root, rel)
 handle('fs:readBase64', async (root, rel) => (await fsp.readFile(inside(root, rel))).toString('base64'));
 handle('shell:open', async (url) => { if (/^https?:\/\//.test(url)) await shell.openExternal(url); });
 
+// ---------- Auto-update (GitHub Releases of datixai/Datex) ----------
+// The installed app checks a few seconds after start and every 6 hours, downloads a newer
+// version in the background (the installer is checked against its SHA-512 before use) and
+// installs it when Datex closes, or right away when the user clicks Restart.
+let updater = null, updateState = { state: 'idle' };
+function setUpdate(s) { updateState = s; send('update:status', s); }
+function initUpdater() {
+  if (!app.isPackaged || updater) return;
+  try { updater = require('electron-updater').autoUpdater; } catch { return; }
+  updater.autoDownload = true; updater.autoInstallOnAppQuit = true;
+  updater.on('checking-for-update', () => setUpdate({ state: 'checking' }));
+  updater.on('update-available', i => setUpdate({ state: 'downloading', version: i.version, percent: 0 }));
+  updater.on('update-not-available', () => setUpdate({ state: 'latest', version: app.getVersion() }));
+  updater.on('download-progress', p => setUpdate({ ...updateState, state: 'downloading', percent: Math.round(p.percent) }));
+  updater.on('update-downloaded', i => setUpdate({ state: 'ready', version: i.version }));
+  updater.on('error', e => setUpdate({ state: 'error', message: String(e && e.message || e).split('\n')[0] }));
+}
+async function checkUpdates() {
+  initUpdater();
+  if (!updater) return { state: 'dev', message: 'Updates work in the installed app.' };
+  try { await updater.checkForUpdates(); } catch (e) { setUpdate({ state: 'error', message: e.message.split('\n')[0] }); }
+  return updateState;
+}
+handle('update:check', checkUpdates);
+handle('update:status', async () => ({ ...updateState, current: app.getVersion() }));
+handle('update:install', async () => { if (updater && updateState.state === 'ready') setImmediate(() => updater.quitAndInstall(true, true)); });
+
 app.whenReady().then(() => {
   loadSettings();
   protocol.handle('app', (req) => {
@@ -870,5 +934,9 @@ app.whenReady().then(() => {
   });
   createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+  if (settings.autoUpdate !== false && !process.env.DATEX_SELFTEST) {
+    setTimeout(checkUpdates, 8000);
+    setInterval(checkUpdates, 6 * 60 * 60 * 1000);
+  }
 });
 app.on('window-all-closed', () => { if (relay) relay.close(); for (const r of running.keys()) stopCompile(r); app.quit(); });

@@ -560,16 +560,18 @@ async function compile() {
   await saveAll();
   if (Date.now() - S.lastSnap > 10 * 60 * 1000) { S.lastSnap = Date.now(); api('history:snapshot', S.root, 'Autosave ' + new Date().toLocaleTimeString()).catch(() => {}); }
   let r;
-  try { r = await api('compile:run', S.root, S.main, $('#engineSel').value); }
+  const only = $('#draftChk').checked && S.active && S.active !== S.main && /\.tex$/i.test(S.active) ? S.active : null;
+  try { r = await api('compile:run', S.root, S.main, $('#engineSel').value, only); }
   catch (e) { r = { ok: false, issues: [{ level: 'error', message: e.message, file: S.main }], log: '', output: e.message }; }
   S.compiling = false; $('#compileBtn').innerHTML = '&#9654; Recompile';
   $('#rawLog').textContent = (r.log || '') + '\n\n---- Output ----\n' + (r.output || '');
   setIssues(r.issues || []);
+  S.pdfMain = r.draft ? '_datex_draft.tex' : S.main;
   const errs = S.issues.filter(i => i.level === 'error').length;
-  status((errs ? `Compiled with ${errs} error(s)` : 'Compiled') + (r.ms ? ` in ${(r.ms / 1000).toFixed(1)} s` : '') + (r.engine ? ` (${r.engine === 'builtin' ? 'Datex TeX' : r.engine})` : ''));
+  status((errs ? `Compiled with ${errs} error(s)` : 'Compiled') + (r.ms ? ` in ${(r.ms / 1000).toFixed(1)} s` : '') + (r.engine ? ` (${r.engine === 'builtin' ? 'Datex TeX' : r.engine})` : '') + (r.draft ? ` · draft: ${r.draft} only` : only ? ' · this file is not part of the main document, so the whole document was built' : ''));
   if (r.pdf && r.fresh !== false) { try { await loadPdf(r.pdf); } catch (e) { toast('Could not show PDF: ' + e.message, true); } }
   else if (!r.pdf) { $('#pdfView').innerHTML = '<div class="pdf-empty">No PDF was produced. Open Logs to see what went wrong.</div>'; $('#logs').classList.remove('hidden'); }
-  if (r.ok && r.pdf) api('project:config', S.root, {}).then(c => { if (c.wordAuto) exportWord(false, true); }).catch(() => {});
+  if (r.ok && r.pdf && !r.draft) api('project:config', S.root, {}).then(c => { if (c.wordAuto) exportWord(false, true); }).catch(() => {});
   if (!r.ok) offerMissingPackages((r.log || '') + '\n' + (r.output || '') + '\n' + (r.issues || []).map(i => i.message).join('\n'), r.engine);
   if (compile.again) compile();
 }
@@ -669,7 +671,7 @@ function zoomStep(d) {
 async function syncForward() {
   if (!S.active || !/\.tex$/i.test(S.active)) return;
   const pos = editor.getPosition();
-  const r = await api('synctex:forward', S.root, S.main, S.active, pos.lineNumber, pos.column).catch(() => null);
+  const r = await api('synctex:forward', S.root, S.pdfMain || S.main, S.active, pos.lineNumber, pos.column).catch(() => null);
   if (!r) return toast('Compile first, then try again');
   const p = S.pages[r.page - 1]; if (!p) return;
   const y = r.y * p.scale;
@@ -681,7 +683,7 @@ async function syncBackward(e) {
   const div = e.target.closest('.pdf-page'); if (!div) return;
   const p = S.pages[div.dataset.page - 1]; const rect = div.getBoundingClientRect();
   const x = (e.clientX - rect.left) / p.scale, y = (e.clientY - rect.top) / p.scale;
-  const r = await api('synctex:backward', S.root, S.main, +div.dataset.page, x, y).catch(() => null);
+  const r = await api('synctex:backward', S.root, S.pdfMain || S.main, +div.dataset.page, x, y).catch(() => null);
   if (r) { await refreshTree(); openFile(r.file, r.line); editor.setSelection({ startLineNumber: r.line, startColumn: 1, endLineNumber: r.line, endColumn: editor.getModel().getLineMaxColumn(r.line) }); }
 }
 
@@ -1012,6 +1014,7 @@ async function settingsDialog() {
       <div style="flex:1"><label>Compile time limit (seconds, 0 = none)</label><input id="stTime" type="number" min="0" value="${s.compileTimeout}"></div></div>
     <label><input type="checkbox" id="stAuto" ${s.autoCompile !== false ? 'checked' : ''}> Compile automatically while typing</label>
     <label><input type="checkbox" id="stWrap" ${s.wordWrap ? 'checked' : ''}> Wrap long lines</label>
+    <label><input type="checkbox" id="stUpd" ${s.autoUpdate !== false ? 'checked' : ''}> Keep Datex up to date automatically (checks for new versions and installs them when Datex closes)</label>
     <div class="row"><label style="flex:1"><input type="checkbox" id="stSpell" ${s.spellcheck !== false ? 'checked' : ''}> Check spelling</label><select id="stLang" style="flex:1"><option value="en-GB">English (UK)</option><option value="en-US">English (US)</option></select></div>
     <label>Local AI server (Ollama)</label><input id="stOllama" value="${esc(s.ollamaUrl)}">
     <label>TeX packages</label>
@@ -1028,7 +1031,7 @@ async function settingsDialog() {
   c.querySelector('#stOk').onclick = async () => {
     settings = await api('settings:set', { userName: c.querySelector('#stName').value || 'Me', projectsDir: c.querySelector('#stDir').value, theme: c.querySelector('#stTheme').value,
       fontSize: +c.querySelector('#stFont').value || 14, engine: c.querySelector('#stEngine').value, compileTimeout: +c.querySelector('#stTime').value || 0,
-      autoCompile: c.querySelector('#stAuto').checked, wordWrap: c.querySelector('#stWrap').checked, spellcheck: c.querySelector('#stSpell').checked, spellLang: c.querySelector('#stLang').value, ollamaUrl: c.querySelector('#stOllama').value });
+      autoCompile: c.querySelector('#stAuto').checked, wordWrap: c.querySelector('#stWrap').checked, spellcheck: c.querySelector('#stSpell').checked, autoUpdate: c.querySelector('#stUpd').checked, spellLang: c.querySelector('#stLang').value, ollamaUrl: c.querySelector('#stOllama').value });
     applyTheme(); editor.updateOptions({ fontSize: settings.fontSize, wordWrap: settings.wordWrap ? 'on' : 'off' });
     $('#autoChk').checked = settings.autoCompile; spellBad = {}; spellCheck(); closeModal(); toast('Settings saved');
     if (!S.root) renderProjects();
@@ -1110,8 +1113,28 @@ async function aboutDialog() {
   const c = modal(`<div class="about"><img src="assets/datex-icon.png" class="app-logo xl" alt=""><h2 style="margin:10px 0 2px">Datex</h2><div class="muted">Version ${esc(info.version)}</div>
     <p>A complete LaTeX writing studio for Windows: editor, TeX engine, PDF viewer, version history, track changes, references and local AI in one app.</p>
     <a href="#" class="credit-big" data-link="https://datixai.com" style="margin:14px auto 0"><img src="assets/datix-mark.png" alt=""><span>Developed by <b>Datix AI</b></span><span class="credit-url">datixai.com</span></a>
-    <div class="modal-actions" style="justify-content:center"><button class="btn primary" id="abOk">Close</button></div></div>`);
+    <div class="muted small" id="abUpd" style="margin-top:12px"></div>
+    <div class="modal-actions" style="justify-content:center"><button class="btn" id="abChk">Check for updates</button><button class="btn primary" id="abOk">Close</button></div></div>`);
   c.querySelector('#abOk').onclick = closeModal;
+  const u = c.querySelector('#abUpd');
+  const show = s => { u.textContent = updateText(s); };
+  show(await api('update:status'));
+  const off = window.datex.onUpdate(show); closeModal.onClose = off;
+  c.querySelector('#abChk').onclick = async () => { u.textContent = 'Checking for updates...'; show(await api('update:check')); };
+  if (aboutDialog.check) { aboutDialog.check = false; c.querySelector('#abChk').click(); }
+}
+function updateText(s) {
+  return ({ checking: 'Checking for updates...', downloading: `Downloading Datex ${s.version || ''}... ${s.percent || 0}%`, latest: 'You have the latest version.',
+    ready: `Datex ${s.version} is ready. It installs when you restart Datex.`, error: 'Could not check for updates (' + (s.message || 'no internet') + ').', dev: s.message }[s.state]) || '';
+}
+// A bar at the bottom when a new version has been downloaded.
+function updateBar(s) {
+  if (s.state !== 'ready' || document.querySelector('#updBar')) return;
+  const b = document.createElement('div'); b.id = 'updBar'; b.className = 'upd-bar';
+  b.innerHTML = `<span>Datex ${esc(s.version)} is ready to install.</span><button class="btn primary sm" id="updNow">Restart now</button><button class="btn ghost sm" id="updLater">Later</button>`;
+  document.body.appendChild(b);
+  b.querySelector('#updNow').onclick = async () => { await saveAll().catch(() => {}); if (S.root) await api('history:snapshot', S.root, 'Before update').catch(() => {}); api('update:install'); };
+  b.querySelector('#updLater').onclick = () => b.remove();
 }
 function guideDialog() {
   const c = modal(`<h2>LaTeX quick guide</h2><div class="mono small" style="white-space:pre-wrap;line-height:1.7">\\section{Title}            Start a section
@@ -1128,7 +1151,7 @@ $x^2 + y_1$               Inline math
 
 // ---------------- Commands & wiring ----------------
 const CMDS = {
-  newProject, exportWord: () => exportWord(false), wordMenu: () => wordMenu(), wordToLatex: () => wordToLatex(null, null), exportWordAs: () => exportWord(true), joinSession: () => live.joinDialog(), packages: () => packagesDialog(), cloneRepo: () => cloneRepo(), openProject: openFolder, importZip: () => importZip(), dashboard: showDashboard, settings: settingsDialog, about: aboutDialog, guide: guideDialog,
+  newProject, exportWord: () => exportWord(false), wordMenu: () => wordMenu(), wordToLatex: () => wordToLatex(null, null), exportWordAs: () => exportWord(true), joinSession: () => live.joinDialog(), packages: () => packagesDialog(), cloneRepo: () => cloneRepo(), openProject: openFolder, importZip: () => importZip(), dashboard: showDashboard, settings: settingsDialog, about: aboutDialog, checkUpdates: () => { aboutDialog.check = true; aboutDialog(); }, guide: guideDialog,
   save: () => saveAll().then(() => toast('Saved')), compile: () => compile(),
   stop: () => api('compile:stop', S.root), clean: async () => { await api('compile:clean', S.root); toast('Build files cleared'); },
   syncForward, zoomIn: () => zoomStep(1), zoomOut: () => zoomStep(-1),
@@ -1148,6 +1171,7 @@ function wire() {
     const l = e.target.closest('[data-link]'); if (l) { e.preventDefault(); api('shell:open', l.dataset.link); }
   });
   window.datex.onMenu(runCmd);
+  window.datex.onUpdate(updateBar);
   window.datex.onCompileOutput(t => { const m = String(t).match(/downloading\s+[`'"]?([^\s`'"]+)/i); if (m && S.compiling) status('Installing packages: ' + m[1]); });
   $('#projSearch').oninput = debounce(renderProjects, 150);
   $('#drawerClose').onclick = closePanel;
@@ -1156,6 +1180,7 @@ function wire() {
   $('#tabs').onclick = e => { const x = e.target.dataset.x; if (x) return closeTab(x); const t = e.target.closest('.tab'); if (t) openFile(t.dataset.p); };
   $('#tabs').onauxclick = e => { const t = e.target.closest('.tab'); if (t && e.button === 1) closeTab(t.dataset.p); };
   $('#mainSel').onchange = e => setMain(e.target.value);
+  $('#draftChk').onchange = () => compile();
   $('#engineSel').onchange = e => { S.engine = e.target.value; api('project:config', S.root, { engine: S.engine }); compile(); };
   $('#autoChk').onchange = e => api('settings:set', { autoCompile: e.target.checked }).then(s => settings = s);
   $('#zoomSel').onchange = e => setZoom(e.target.value);
@@ -1193,5 +1218,5 @@ async function main() {
   // Keep the opening screen up long enough to read, then fade it out.
   setTimeout(() => { const sp = $('#splash'); sp.classList.add('out'); setTimeout(() => { sp.remove(); stopSplashStars(); }, 800); }, Math.max(0, 2600 - (performance.now() - splashStart)));
 }
-window.__datex = { S, openProject, compile, openPanel, syncForward, newProject, live };
+window.__datex = { S, openProject, compile, openFile, openPanel, syncForward, newProject, live };
 main().catch(e => { document.body.innerHTML = '<pre style="padding:20px;color:#f88">Datex failed to start:\n' + esc(e.stack || e.message) + '</pre>'; });

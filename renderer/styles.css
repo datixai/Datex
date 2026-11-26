@@ -238,3 +238,7 @@ body.light .dash-head{color:var(--text)}
 .topbar .btn{padding:6px 12px}
 .proj-name{max-width:200px}
 .topbar .tb-label select{max-width:130px}
+
+/* Update ready bar */
+.upd-bar { position: fixed; left: 50%; bottom: 34px; transform: translateX(-50%); z-index: 60; display: flex; gap: 10px; align-items: center;
+  background: var(--bg2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; box-shadow: 0 6px 24px rgba(0,0,0,.35); }

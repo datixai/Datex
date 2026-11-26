@@ -1,7 +1,7 @@
 {
   "name": "datex",
   "productName": "Datex",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Datex: a professional LaTeX editor for Windows. Developed by Datix AI (datixai.com)",
   "main": "main.js",
   "author": "Datix AI",
@@ -51,7 +51,8 @@
       "perMachine": false,
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
-      "license": "LICENSE.txt"
+      "license": "LICENSE.txt",
+      "artifactName": "Datex-Setup-${version}.${ext}"
     },
     "extraResources": [
       {
@@ -63,7 +64,15 @@
         "to": "tex-cache"
       }
     ],
-    "copyright": "Copyright (c) 2026 Datix AI"
+    "copyright": "Copyright (c) 2026 Datix AI",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "datixai",
+        "repo": "Datex",
+        "releaseType": "release"
+      }
+    ]
   },
   "devDependencies": {
     "electron": "^45.4.1",
@@ -73,6 +82,7 @@
   "dependencies": {
     "dictionary-en": "^4.0.0",
     "dictionary-en-gb": "^3.0.0",
+    "electron-updater": "^6.8.11",
     "monaco-editor": "^0.52.2",
     "nspell": "^2.1.5",
     "pdfjs-dist": "^4.10.38",
