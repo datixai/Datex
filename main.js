@@ -1,6 +1,6 @@
 // Datex main process. Developed by Datix AI (datixai.com).
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, protocol, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, protocol, net, safeStorage } = require('electron');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
@@ -22,6 +22,7 @@ const DEFAULTS = {
   engine: 'auto', autoCompile: true, compileTimeout: 0,
   fontSize: 14, wordWrap: true, theme: 'system', userName: 'Me', spellLang: 'en-GB',
   ollamaUrl: 'http://127.0.0.1:11434', aiModel: 'gpt-oss:20b',
+  aiProvider: 'local', cloudModel: 'claude-opus-5-5',
   recent: []
 };
 let settings = { ...DEFAULTS };
@@ -100,6 +101,7 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'File', submenu: [
       { label: 'New Project...', accelerator: 'Ctrl+Shift+N', click: cmd('newProject') },
+      { label: 'Build a Document with AI...', click: cmd('aiNewProject') },
       { label: 'Open Project Folder...', accelerator: 'Ctrl+Shift+O', click: cmd('openProject') },
       { label: 'Import Project from ZIP...', click: cmd('importZip') },
       { label: 'Project Dashboard', accelerator: 'Ctrl+Shift+D', click: cmd('dashboard') },
@@ -131,6 +133,7 @@ function buildMenu() {
     ] },
     { label: 'Tools', submenu: [
       { label: 'AI Assistant', accelerator: 'Ctrl+Shift+A', click: cmd('ai') },
+      { label: 'Ask AI to Build or Change...', accelerator: 'Ctrl+K', click: cmd('aiPrompt') },
       { label: 'References', accelerator: 'Ctrl+Shift+B', click: cmd('refs') },
       { label: 'Symbol Palette', click: cmd('symbols') },
       { label: 'Git, GitHub and Cloud Backup', click: cmd('git') },
@@ -473,18 +476,28 @@ async function projectBib(root) {
 // ---------- AI (local Ollama) ----------
 const aiJobs = new Map();
 async function aiModels() {
+  if (settings.aiProvider === 'claude') return cloudReady() ? CLOUD_MODELS : [];
   try { const r = await fetch(settings.ollamaUrl + '/api/tags'); const j = await r.json(); return (j.models || []).map(m => m.name); }
   catch { return []; }
 }
-async function aiChat(id, messages, model) {
+// opts.numCtx: context window to ask for. Ollama's default is small and silently drops the start
+// of a long prompt, so the Build chat (which sends the whole project) asks for what it needs.
+async function aiChat(id, messages, model, opts = {}) {
   const ctrl = new AbortController();
   aiJobs.set(id, ctrl);
   try {
+    const body = { model: model || settings.aiModel, messages, stream: true };
+    if (opts.numCtx > 0) body.options = { num_ctx: Math.min(131072, Math.round(opts.numCtx)) };
+    // Edits must copy text from the files exactly, so the Build chat asks for a low temperature.
+    if (typeof opts.temperature === 'number') body.options = { ...body.options, temperature: Math.max(0, Math.min(2, opts.temperature)) };
     const res = await fetch(settings.ollamaUrl + '/api/chat', {
       method: 'POST', signal: ctrl.signal, headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: model || settings.aiModel, messages, stream: true })
+      body: JSON.stringify(body)
     });
-    if (!res.ok) throw new Error('AI model error (' + res.status + ')');
+    if (!res.ok) {
+      let why = ''; try { why = JSON.parse(await res.text()).error || ''; } catch {}
+      throw new Error(why || 'AI model error (' + res.status + ')');
+    }
     const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
     for (;;) {
       const { value, done } = await reader.read(); if (done) break;
@@ -494,12 +507,66 @@ async function aiChat(id, messages, model) {
         const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
         if (!line) continue;
         const j = JSON.parse(line);
+        if (j.error) throw new Error(j.error);
         if (j.message && j.message.content) send('ai:chunk', { id, text: j.message.content });
+        // Reasoning models think before they answer: let the window show that something is happening.
+        else if (j.message && j.message.thinking) send('ai:chunk', { id, text: '', thinking: true });
       }
     }
     send('ai:done', { id });
   } catch (e) {
     send('ai:done', { id, error: e.name === 'AbortError' ? null : 'Local AI is not available: ' + e.message });
+  } finally { aiJobs.delete(id); }
+}
+
+// ---------- AI (cloud, optional: Claude through the Anthropic API) ----------
+// Off unless the user turns it on in the AI panel. The API key is encrypted with Windows' own
+// protection (DPAPI) in the user's profile and is never sent to the window or kept in settings.
+const CLOUD_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-2'];
+const cloudKeyFile = () => path.join(app.getPath('userData'), 'cloud-key.bin');
+function cloudKey() { try { return safeStorage.decryptString(fs.readFileSync(cloudKeyFile())); } catch { return ''; } }
+const cloudReady = () => !!(cloudKey() || process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
+async function cloudChat(id, messages, model) {
+  const sdk = require('@anthropic-ai/sdk');
+  const Anthropic = sdk.Anthropic || sdk.default || sdk;
+  let stream = null, stopped = false;
+  aiJobs.set(id, { abort: () => { stopped = true; if (stream) stream.abort(); } });
+  try {
+    const key = cloudKey();
+    // No stored key: the SDK reads ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN from the environment.
+    const client = key ? new Anthropic({ apiKey: key }) : new Anthropic();
+    model = CLOUD_MODELS.includes(model) ? model : CLOUD_MODELS[0];
+    const params = {
+      model, max_tokens: 64000,
+      system: messages.filter(m => m.role === 'system').map(m => m.content).join('\n\n'),
+      messages: messages.filter(m => m.role !== 'system').map(m => ({ role: m.role, content: m.content })),
+      output_config: { effort: 'medium' }
+    };
+    // If the model declines a request, the API answers with a fallback model in the same call.
+    // Claude Haiku 5.5 has no server-side fallback, so it is sent without one.
+    stream = model === 'claude-haiku-5-5' ? client.messages.stream(params)
+      : client.beta.messages.stream({ ...params, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
+    if (stopped) stream.abort();
+    for await (const event of stream) {
+      if (event.type === 'content_block_start' && event.content_block.type === 'thinking') send('ai:chunk', { id, text: '', thinking: true });
+      else if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') send('ai:chunk', { id, text: event.delta.text });
+    }
+    const final = await stream.finalMessage();
+    if (final.stop_reason === 'refusal') throw new Error('The model declined this request.');
+    if (final.stop_reason === 'max_tokens') throw new Error('The answer was too long and was cut off, so nothing was changed. Ask for a smaller change.');
+    send('ai:done', { id });
+  } catch (e) {
+    let msg;
+    if (e instanceof Anthropic.APIUserAbortError) msg = null;
+    else if (e instanceof Anthropic.AuthenticationError) msg = 'The Claude API key was not accepted. Check the key in the AI panel.';
+    else if (e instanceof Anthropic.PermissionDeniedError) msg = 'This Claude API key is not allowed to use ' + model + '. Choose another model.';
+    else if (e instanceof Anthropic.NotFoundError) msg = 'The model ' + model + ' is not available for this API key. Choose another model.';
+    else if (e instanceof Anthropic.RateLimitError) msg = 'The Claude API rate limit was reached. Wait a moment and try again.';
+    else if (e instanceof Anthropic.BadRequestError) msg = 'The Claude API did not accept the request: ' + e.message;
+    else if (e instanceof Anthropic.APIConnectionError) msg = 'Could not reach the Claude API. Check the internet connection.';
+    else if (e instanceof Anthropic.APIError) msg = 'Claude API error' + (e.status ? ' (' + e.status + ')' : '') + ': ' + e.message;
+    else msg = /api.?key|authToken|credentials/i.test(e.message) && !cloudReady() ? 'No Claude API key is set. Add one in the AI panel.' : e.message;
+    send('ai:done', { id, error: msg });
   } finally { aiJobs.delete(id); }
 }
 
@@ -649,7 +716,17 @@ handle('refs:project', projectBib);
 handle('refs:doi', bibFromDoi);
 handle('refs:zotero', async () => parseBib(await zoteroLibrary()));
 handle('ai:models', aiModels);
-handle('ai:chat', async (id, messages, model) => { aiChat(id, messages, model); return id; });
+handle('ai:chat', async (id, messages, model, opts) => { settings.aiProvider === 'claude' ? cloudChat(id, messages, model) : aiChat(id, messages, model, opts || {}); return id; });
+handle('ai:cloudStatus', async () => ({ ready: cloudReady(), stored: fs.existsSync(cloudKeyFile()), models: CLOUD_MODELS }));
+// Save the key (encrypted), or remove it when called with nothing.
+handle('ai:cloudKey', async (key) => {
+  key = String(key || '').trim();
+  if (!key) { await fsp.rm(cloudKeyFile(), { force: true }); return false; }
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('Windows could not protect the key on this PC, so it was not saved.');
+  await fsp.mkdir(path.dirname(cloudKeyFile()), { recursive: true });
+  await fsp.writeFile(cloudKeyFile(), safeStorage.encryptString(key));
+  return true;
+});
 handle('ai:stop', async (id) => { const c = aiJobs.get(id); if (c) c.abort(); });
 // ---------- TeX packages ----------
 function dirSize(p) { let n = 0; try { for (const e of fs.readdirSync(p, { withFileTypes: true })) n += e.isDirectory() ? dirSize(path.join(p, e.name)) : fs.statSync(path.join(p, e.name)).size; } catch {} return n; }

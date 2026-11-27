@@ -15,7 +15,6 @@
     <img class="icon" src="assets/datex-icon.png" alt="">
     <h1>DATEX</h1>
     <div class="tag">LaTeX writing studio</div>
-    <div class="splash-by"><div class="line"><img src="assets/datix-mark.png" alt=""><span>Developed by <b>Datix AI</b></span></div><div class="url">datixai.com</div></div>
     <div class="splash-bar"><i></i></div>
   </div>
 </div>
@@ -25,6 +24,7 @@
     <div class="brand"><img src="assets/datex-icon.png" class="app-logo lg" alt=""><div><h1>Datex</h1><p>Professional LaTeX writing studio</p></div></div>
     <div class="dash-actions">
       <button class="btn primary" data-cmd="newProject">+ New Project</button>
+      <button class="btn" data-cmd="aiNewProject" title="Describe a document and let the local AI write the first draft">&#10022; Build with AI</button>
       <button class="btn" data-cmd="openProject">Open Folder</button>
       <button class="btn" data-cmd="importZip" title="Open a LaTeX project from a .zip file, for example one downloaded from Overleaf">Import ZIP</button>
       <button class="btn" data-cmd="wordToLatex" title="Turn a Word document (.docx) into a LaTeX project">Word to LaTeX</button>
@@ -95,6 +95,7 @@
       <div id="tabs" class="tabs"></div>
       <div id="editor" class="editor"></div>
       <div id="imageView" class="image-view hidden"></div>
+      <div class="prompt-bar" id="promptBar"><span class="spark">&#10022;</span><input id="promptIn" placeholder="Ask AI to build or change this document, for example: add a results section with a table   (Ctrl+K)"><button class="btn ai sm" id="promptGo" title="The AI edits your files. You can review or undo every change.">Build</button></div>
       <div class="statusbar"><span id="status">Ready</span><span class="spacer"></span><span id="cursorPos"></span><span id="wordCount"></span><a href="#" class="credit-link" data-link="https://datixai.com" title="Visit datixai.com"><img src="assets/datix-mark.png" alt="">Developed by Datix AI</a></div>
     </main>
     <div class="gutter" data-resize="pdfPane"></div>
