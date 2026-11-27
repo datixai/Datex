@@ -2,6 +2,7 @@
 import * as pdfjsLib from '../node_modules/pdfjs-dist/build/pdf.mjs';
 import { LATEX_COMMANDS, ENVIRONMENTS, SYMBOLS, AI_ACTIONS } from './data.js';
 import * as live from './live.js';
+import { BUILD_SYS, EDITABLE, parseEdits, applyOps, progress, wholeDocument, minimalEdit, buildContext, contextTokens } from './aibuild.js';
 import { starfield } from './stars.js';
 const splashStart = performance.now();
 const stopSplashStars = starfield(document.querySelector('#splash .sky'), { density: 0.00028 });
@@ -184,6 +185,7 @@ function createEditor() {
   const KM = monaco.KeyMod, KC = monaco.KeyCode;
   editor.addCommand(KM.CtrlCmd | KC.Enter, () => compile());
   editor.addCommand(KM.CtrlCmd | KC.KeyS, () => { saveAll(); compile(); });
+  editor.addCommand(KM.CtrlCmd | KC.KeyK, () => $('#promptIn').focus());
   editor.addCommand(KM.CtrlCmd | KC.KeyB, () => wrap('\\textbf{', '}'));
   editor.addCommand(KM.CtrlCmd | KC.KeyI, () => wrap('\\textit{', '}'));
   editor.addCommand(KM.CtrlCmd | KM.Alt | KC.KeyJ, () => syncForward());
@@ -301,6 +303,7 @@ async function openProject(dir) {
     const p = await api('project:open', dir);
     Object.assign(S, { root: p.dir, name: p.name, main: p.main, engine: p.engine, files: new Map(), active: null, issues: [], pdf: null, pdfPath: null, pages: [], lastSnap: Date.now() });
     for (const m of monaco.editor.getModels()) m.dispose();
+    resetAi();
     $('#dashboard').classList.add('hidden'); $('#editorView').classList.remove('hidden');
     $('#projName').textContent = p.name; document.title = 'Datex  |  ' + p.name;
     $('#engineSel').value = S.engine; $('#autoChk').checked = settings.autoCompile !== false;
@@ -886,25 +889,86 @@ function refsPanel(el) {
 }
 
 // AI assistant using local models through Ollama.
+// Two modes. Build: the AI reads the whole project and changes the files itself (you can review
+// or undo every change). Ask: a plain chat that only answers; you insert what you want.
 const SYS = 'You are Datex AI, a LaTeX expert built into the Datex editor by Datix AI. Be concise and accurate. When you give LaTeX, put it in one ```latex code block. Never invent citations or references.';
-let aiHistory = [];
+let aiHistory = [], buildHistory = [], aiBusy = false;
+// The conversation stays when the panel is closed or another panel is opened.
+const aiLogEl = document.createElement('div'); aiLogEl.id = 'aiLog'; aiLogEl.className = 'ai-log';
+const aiMode = () => settings.aiMode === 'ask' ? 'ask' : 'build';
+function resetAi() { aiHistory = []; buildHistory = []; aiLogEl.innerHTML = ''; }
+function aiSay(cls, text) { const d = document.createElement('div'); d.className = cls; d.textContent = text; aiLogEl.appendChild(d); d.scrollIntoView({ block: 'end' }); return d; }
+
 async function aiPanel(el) {
+  const cloud = isCloud();
   const models = await api('ai:models').catch(() => []);
-  el.innerHTML = `<div class="row"><select id="aiModel">${models.map(m => `<option${m === settings.aiModel ? ' selected' : ''}>${esc(m)}</option>`).join('') || '<option value="">Local AI is not running</option>'}</select></div>
+  const picked = cloud ? settings.cloudModel : settings.aiModel;
+  el.innerHTML = `<div class="row"><div class="seg" id="aiModeSeg"><button data-m="build" title="The AI changes your files itself. Every change can be reviewed or undone.">Build</button><button data-m="ask" title="The AI only answers. Nothing is changed unless you insert it.">Ask</button></div>
+      <select id="aiProv" title="Where the AI runs"><option value="local">Local (this PC)</option><option value="claude"${cloud ? ' selected' : ''}>Claude (cloud)</option></select></div>
+    <div class="row"><select id="aiModel">${models.map(m => `<option${m === picked ? ' selected' : ''}>${esc(m)}</option>`).join('') || `<option value="">${cloud ? 'No API key set' : 'Local AI is not running'}</option>`}</select>${cloud ? '<button class="btn sm ghost" id="aiKey" title="Change or remove the Claude API key">API key</button>' : ''}</div>
     <div class="chips">${AI_ACTIONS.map((a, i) => `<span class="chip" data-a="${i}" title="${esc(a.hint)}">${esc(a.label)}</span>`).join('')}</div>
-    <div id="aiLog" style="display:flex;flex-direction:column;gap:8px"></div>
-    <textarea id="aiIn" rows="3" placeholder="Ask anything about LaTeX or your document. Ctrl+Enter to send."></textarea>
+    <div id="aiLogHost"></div>
+    <textarea id="aiIn" rows="3"></textarea>
     <div class="row"><button class="btn ai" id="aiSend">Send</button><button class="btn ghost" id="aiStop">Stop</button><button class="btn ghost" id="aiClear">New chat</button></div>
-    <p class="muted small">Runs on this computer with local models. Your document never leaves your PC.</p>`;
-  if (!models.length) el.querySelector('#aiLog').innerHTML = '<div class="card">The AI assistant is optional and is not set up on this PC. Everything else in Datex works without it. To use AI, install <a href="#" data-link="https://ollama.com">Ollama</a>, then pull a model (for example <span class="mono">ollama pull qwen2.5:7b</span>).</div>';
-  el.querySelector('#aiModel').onchange = e => api('settings:set', { aiModel: e.target.value }).then(s => settings = s);
+    <p class="muted small">${cloud ? '<b>Cloud model.</b> Each request sends the text of this project\'s files (.tex, .bib and similar) to Anthropic over the internet, and is charged to your API key. Switch to Local to keep everything on this PC.' : 'Runs on this computer with local models. Your document never leaves your PC.'}</p>`;
+  el.querySelector('#aiLogHost').replaceWith(aiLogEl);
+  aiLogEl.querySelector('.ai-setup')?.remove();
+  if (!models.length) aiLogEl.insertAdjacentHTML('afterbegin', cloud
+    ? '<div class="card ai-setup">No Claude API key is set. Click <b>API key</b> above to add one, or switch back to Local.</div>'
+    : '<div class="card ai-setup">The AI assistant is optional and is not set up on this PC. Everything else in Datex works without it. To use AI, install <a href="#" data-link="https://ollama.com">Ollama</a>, then pull a model (for example <span class="mono">ollama pull qwen2.5:7b</span>). Or choose Claude (cloud) above.</div>');
+  else if (!models.includes(picked)) settings = await api('settings:set', { [cloud ? 'cloudModel' : 'aiModel']: el.querySelector('#aiModel').value });
+  const redraw = () => { el.innerHTML = ''; aiPanel(el); };
+  el.querySelector('#aiProv').onchange = async e => {
+    if (e.target.value === 'claude' && !(await api('ai:cloudStatus')).ready) { if (!await cloudKeyDialog()) { e.target.value = 'local'; return; } }
+    else if (e.target.value === 'claude' && !settings.cloudOk && !await confirmModal('Use a cloud model?', 'With Claude (cloud), each AI request sends the text of this project\'s files to Anthropic over the internet and is charged to your API key. Nothing is sent while Local is selected.', 'Use Claude')) { e.target.value = 'local'; return; }
+    settings = await api('settings:set', { aiProvider: e.target.value, ...(e.target.value === 'claude' ? { cloudOk: true } : {}) });
+    redraw();
+  };
+  if (cloud) el.querySelector('#aiKey').onclick = async () => { await cloudKeyDialog(); if (!(await api('ai:cloudStatus')).ready) settings = await api('settings:set', { aiProvider: 'local' }); redraw(); };
+  const showMode = () => {
+    el.querySelectorAll('#aiModeSeg button').forEach(b => b.classList.toggle('on', b.dataset.m === aiMode()));
+    el.querySelector('#aiIn').placeholder = aiMode() === 'build'
+      ? 'Describe what to build or change, for example: "Add a methods section with a table of the three experiments". Ctrl+Enter to send.'
+      : 'Ask anything about LaTeX or your document. Ctrl+Enter to send.';
+  };
+  showMode();
+  el.querySelector('#aiModeSeg').onclick = async e => { const m = e.target.dataset.m; if (!m) return; settings = await api('settings:set', { aiMode: m }); showMode(); };
+  el.querySelector('#aiModel').onchange = e => api('settings:set', { [cloud ? 'cloudModel' : 'aiModel']: e.target.value }).then(s => settings = s);
   el.querySelector('.chips').onclick = e => { const i = e.target.dataset.a; if (i !== undefined) runAction(AI_ACTIONS[i], el); };
-  el.querySelector('#aiSend').onclick = () => { const v = el.querySelector('#aiIn').value.trim(); if (v) { el.querySelector('#aiIn').value = ''; aiAsk(el, v, v); } };
+  el.querySelector('#aiSend').onclick = () => {
+    const v = el.querySelector('#aiIn').value.trim(); if (!v) return;
+    if (aiBusy) return toast('The AI is still working on the last request');
+    el.querySelector('#aiIn').value = '';
+    aiMode() === 'build' ? buildAsk(v) : aiAsk(el, v, v);
+  };
   el.querySelector('#aiIn').onkeydown = e => { if (e.key === 'Enter' && e.ctrlKey) el.querySelector('#aiSend').click(); };
   el.querySelector('#aiStop').onclick = () => aiAsk.id && api('ai:stop', aiAsk.id);
-  el.querySelector('#aiClear').onclick = () => { aiHistory = []; el.querySelector('#aiLog').innerHTML = ''; };
+  el.querySelector('#aiClear').onclick = () => resetAi();
 }
-function selectionText() { const s = editor.getSelection(); return s && !s.isEmpty() ? editor.getModel().getValueInRange(s) : ''; }
+const isCloud = () => settings.aiProvider === 'claude';
+// Ask for the Claude API key. It goes straight to the main process, which stores it encrypted;
+// the window never reads it back. Resolves true when a key was saved.
+function cloudKeyDialog() {
+  return new Promise(async res => {
+    const st = await api('ai:cloudStatus').catch(() => ({}));
+    const c = modal(`<h2>Claude (cloud) API key</h2>
+      <p>With a cloud model, each AI request sends the text of this project's files (.tex, .bib and similar) to Anthropic over the internet. Requests are charged to your Anthropic account. Nothing is sent while Local is selected.</p>
+      <label>Anthropic API key</label><input id="ckKey" type="password" autocomplete="off" placeholder="${st.stored ? 'A key is saved. Paste a new one to replace it.' : 'sk-ant-...'}">
+      <p class="muted small">Get a key at <a href="#" data-link="https://console.anthropic.com/settings/keys">console.anthropic.com</a>. It is stored encrypted on this PC with Windows' own protection and is used only to call the Claude API.</p>
+      <div class="modal-actions">${st.stored ? '<button class="btn danger" id="ckDel">Remove key</button>' : ''}<button class="btn ghost" id="ckNo">Cancel</button><button class="btn primary" id="ckOk">Save key</button></div>`);
+    c.style.width = '560px';
+    let done = false; const finish = v => { if (done) return; done = true; closeModal(); res(v); };
+    closeModal.onClose = () => { if (!done) { done = true; res(false); } };
+    c.querySelector('#ckKey').focus();
+    c.querySelector('#ckNo').onclick = () => finish(false);
+    if (st.stored) c.querySelector('#ckDel').onclick = async () => { await api('ai:cloudKey', ''); toast('Claude API key removed'); finish(false); };
+    c.querySelector('#ckOk').onclick = async () => {
+      const k = c.querySelector('#ckKey').value.trim(); if (!k) return toast('Paste the API key first', true);
+      try { await api('ai:cloudKey', k); toast('Claude API key saved'); finish(true); } catch (e) { toast(e.message, true); }
+    };
+  });
+}
+function selectionText() { const s = editor.getSelection(); return s && !s.isEmpty() && editor.getModel() ? editor.getModel().getValueInRange(s) : ''; }
 async function runAction(a, el) {
   const sel = selectionText();
   if (a.needsSel && !sel) return toast('Select some text in the editor first');
@@ -912,6 +976,8 @@ async function runAction(a, el) {
   if (a.id === 'fix') {
     const errs = S.issues.filter(i => i.level === 'error').slice(0, 5);
     if (!errs.length) return toast('No compile errors to fix');
+    // In Build mode the AI corrects the files itself.
+    if (aiMode() === 'build') return buildAsk('Fix the compile errors listed above. Change as little as possible.', 'Fix compile errors');
     for (const er of errs) {
       const f = S.files.get(er.file) || S.files.get(S.main);
       const lines = f ? f.model.getLinesContent() : [];
@@ -925,29 +991,196 @@ async function runAction(a, el) {
   const prompt = a.prompt.replace('{sel}', sel).replace('{input}', input).replace('{errors}', extra).replace('{doc}', main.slice(0, 12000));
   aiAsk(el, prompt, a.label + (input ? ': ' + input : ''), a.replace && sel ? editor.getSelection() : null);
 }
-async function aiAsk(el, prompt, shown, replaceRange) {
-  const log = el.querySelector('#aiLog');
-  log.insertAdjacentHTML('beforeend', `<div class="ai-msg user">${esc(shown.slice(0, 400))}</div>`);
-  const out = document.createElement('div'); out.className = 'ai-msg'; out.textContent = '...'; log.appendChild(out);
-  aiHistory.push({ role: 'user', content: prompt });
-  const id = 'ai' + Date.now(); aiAsk.id = id; let text = '';
-  const offC = window.datex.onAiChunk(d => { if (d.id === id) { text += d.text; out.textContent = text; out.scrollIntoView({ block: 'end' }); } });
-  const offD = window.datex.onAiDone(d => {
-    if (d.id !== id) return; offC(); offD();
-    if (d.error) { out.textContent = d.error; return; }
-    aiHistory.push({ role: 'assistant', content: text });
-    const code = (text.match(/```(?:latex|tex)?\n([\s\S]*?)```/) || [])[1];
-    const bar = document.createElement('div'); bar.className = 'row'; bar.style.marginTop = '6px';
-    const btn = (l, fn) => { const b = document.createElement('button'); b.className = 'btn sm'; b.textContent = l; b.onclick = fn; bar.appendChild(b); };
-    const payload = (code || text).trim();
-    if (replaceRange) btn('Replace selection', () => { editor.executeEdits('datex-ai', [{ range: replaceRange, text: payload }]); toast('Replaced'); });
-    btn('Insert at cursor', () => insertPlain(payload));
-    btn('Copy', () => navigator.clipboard.writeText(payload).then(() => toast('Copied')));
-    out.appendChild(bar);
+// Buttons under an answer that holds LaTeX: put it in the document or copy it.
+function codeButtons(out, text, replaceRange) {
+  const code = (text.match(/```(?:latex|tex)?\n([\s\S]*?)```/) || [])[1];
+  const bar = document.createElement('div'); bar.className = 'row'; bar.style.marginTop = '6px';
+  const btn = (l, fn) => { const b = document.createElement('button'); b.className = 'btn sm'; b.textContent = l; b.onclick = fn; bar.appendChild(b); };
+  const payload = (code || text).trim();
+  if (replaceRange) btn('Replace selection', () => { editor.executeEdits('datex-ai', [{ range: replaceRange, text: payload }]); toast('Replaced'); });
+  btn('Insert at cursor', () => insertPlain(payload));
+  btn('Copy', () => navigator.clipboard.writeText(payload).then(() => toast('Copied')));
+  out.appendChild(bar);
+}
+// Send messages to the model and collect the streamed answer. stopped: the user pressed Stop.
+function aiStream(messages, onText, opts) {
+  return new Promise(resolve => {
+    const id = 'ai' + Date.now() + Math.random().toString(36).slice(2, 6); aiAsk.id = id; let text = '';
+    const offC = window.datex.onAiChunk(d => { if (d.id === id) { text += d.text; onText(text, d.thinking); } });
+    const offD = window.datex.onAiDone(d => { if (d.id !== id) return; offC(); offD(); resolve({ text, error: d.error || null, stopped: d.error === null }); });
+    api('ai:chat', id, messages, $('#aiModel')?.value || (isCloud() ? settings.cloudModel : settings.aiModel), opts).catch(e => { offC(); offD(); resolve({ text, error: e.message, stopped: false }); });
   });
-  await api('ai:chat', id, [{ role: 'system', content: SYS }, ...aiHistory.slice(-10)], el.querySelector('#aiModel').value || settings.aiModel);
+}
+async function aiAsk(el, prompt, shown, replaceRange) {
+  if (aiBusy) return toast('The AI is still working on the last request');
+  aiBusy = true;
+  aiSay('ai-msg user', shown.slice(0, 400));
+  const out = aiSay('ai-msg', '...');
+  aiHistory.push({ role: 'user', content: prompt });
+  const r = await aiStream([{ role: 'system', content: SYS }, ...aiHistory.slice(-10)], (t, thinking) => { out.textContent = t || (thinking ? 'Thinking...' : '...'); out.scrollIntoView({ block: 'end' }); });
+  aiBusy = false;
+  if (r.error) { out.textContent = r.error; return; }
+  aiHistory.push({ role: 'assistant', content: r.text });
+  if (r.text.trim()) codeButtons(out, r.text, replaceRange);
 }
 function insertPlain(t) { editor.executeEdits('datex-ai', [{ range: editor.getSelection(), text: t, forceMoveMarkers: true }]); editor.focus(); }
+
+// ---------------- AI Build: the prompt chat that writes the document ----------------
+// Everything the model needs to see: the project's text files, the open file, the selection
+// and the current compile errors.
+async function projectContext() {
+  const files = [];
+  for (const p of allFiles().filter(p => EDITABLE.test(p))) {
+    const f = S.files.get(p);
+    let text; try { text = f ? f.model.getValue() : await api('fs:read', S.root, p); } catch { continue; }
+    if (text.length <= 600000) files.push({ path: p, text });
+  }
+  return buildContext({ files, main: S.main, active: S.active, selection: selectionText(), issues: S.issues, budget: isCloud() ? 400000 : settings.aiContextChars || 60000 });
+}
+const posAt = (text, off) => { const before = text.slice(0, off); const l = before.split('\n').length; return { l, c: off - before.lastIndexOf('\n') }; };
+let aiMarks = null;
+// Put new text into a project file through the editor, so undo (Ctrl+Z), autosave, auto compile
+// and live sessions all see it as a normal edit.
+async function setFileText(rel, text, created) {
+  if (created) {
+    await api('fs:write', S.root, rel, text); live.fileCreated(rel, text);
+    const d = rel.split('/').slice(0, -1); for (let i = 1; i <= d.length; i++) openDirs.add(d.slice(0, i).join('/'));
+    return;
+  }
+  await openFile(rel);
+  const f = S.files.get(rel); if (!f) return;
+  const before = f.model.getValue(monaco.editor.EndOfLinePreference.LF);
+  const e = minimalEdit(before, text); if (e.start === e.end && !e.text) return;
+  const a = posAt(before, e.start), b = posAt(before, e.end);
+  f.model.pushStackElement();
+  f.model.pushEditOperations([], [{ range: new monaco.Range(a.l, a.c, b.l, b.c), text: e.text }], () => null);
+  f.model.pushStackElement();
+  // Show where the change is for a few seconds.
+  const last = Math.min(f.model.getLineCount(), a.l + e.text.split('\n').length - 1);
+  aiMarks?.clear();
+  aiMarks = editor.createDecorationsCollection([{ range: new monaco.Range(a.l, 1, last, 1), options: { isWholeLine: true, className: 'ai-changed', linesDecorationsClassName: 'ai-changed-bar' } }]);
+  const mine = aiMarks; setTimeout(() => mine.clear(), 8000);
+  editor.revealLineInCenterIfOutsideViewport(a.l);
+}
+// Apply the model's edits. A version is saved first, so History always has the text from before.
+async function applyBuild(ops, label) {
+  await api('history:snapshot', S.root, 'Before AI: ' + label.slice(0, 60)).catch(() => {}); S.lastSnap = Date.now();
+  const base = (await api('history:list', S.root).catch(() => []))[0]?.hash || 'HEAD';
+  const existing = new Set(allFiles()), texts = {};
+  for (const p of new Set(ops.map(o => o.path))) {
+    const f = S.files.get(p);
+    texts[p] = f ? f.model.getValue() : existing.has(p) ? await api('fs:read', S.root, p) : null;
+  }
+  const res = applyOps(texts, ops);
+  const was = S.active;
+  for (const f of res.files) await setFileText(f.path, f.after, f.created);
+  if (res.files.some(f => f.created)) await refreshTree();
+  const show = res.files.find(f => f.path === was) || res.files.find(f => !f.created) || res.files[0];
+  if (show && S.active !== show.path) await openFile(show.path);
+  await saveAll();
+  return { ...res, base };
+}
+async function undoBuild(res) {
+  for (const f of res.files) {
+    if (f.created) { await api('fs:trash', S.root, f.path).catch(() => {}); live.fileDeleted(f.path); if (S.files.has(f.path)) closeTab(f.path, true); }
+    else await setFileText(f.path, f.before, false);
+  }
+  await refreshTree(); await saveAll(); compile();
+}
+// The list of changed files under an answer: open, review (accept or reject each change), undo.
+function changeCard(res) {
+  const d = document.createElement('div'); d.className = 'ai-changes';
+  d.innerHTML = res.files.map((f, i) => `<div class="ai-file"><span class="nm" data-open="${i}" title="Open this file">${esc(f.path)}</span>${f.created ? '<span class="tag">new</span>' : ''}<span class="add">+${f.added}</span><span class="del">&minus;${f.removed}</span><button class="btn sm" data-rv="${i}" title="See each change and reject the ones you do not want">Review</button></div>`).join('')
+    + (res.failed.length ? `<div class="ai-fail">${res.failed.length} change${res.failed.length > 1 ? 's' : ''} could not be placed (${esc([...new Set(res.failed.map(f => f.path))].join(', '))}): the text to replace was not found. Ask again, or try a larger model.</div>` : '')
+    + (res.files.length ? '<div class="row"><button class="btn sm ghost" data-undo="1">Undo all</button><span class="muted small">Applied to your files. A version from before is in History.</span></div>' : '<div class="muted small">Nothing was changed.</div>');
+  d.onclick = async e => {
+    const t = e.target;
+    if (t.dataset.open !== undefined) return openFile(res.files[t.dataset.open].path);
+    if (t.dataset.rv !== undefined) { const f = res.files[t.dataset.rv]; return reviewDialog(f.path, res.base, 'AI changes: ' + f.path); }
+    if (t.dataset.undo) { t.disabled = true; await undoBuild(res); t.textContent = 'Undone'; toast('AI changes undone'); }
+  };
+  return d;
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function compileAndWait() { while (S.compiling) await sleep(300); await compile(); while (S.compiling) await sleep(300); }
+
+// One turn of the Build chat: send the project and the request, apply the edits that come back,
+// compile, and if the new text does not compile let the AI correct it (twice at most).
+async function buildAsk(prompt, shown, round = 0) {
+  if (!S.root) return toast('Open a project first');
+  if (aiBusy) return toast('The AI is still working on the last request');
+  if (S.panel !== 'ai' || $('#drawer').classList.contains('hidden')) openPanel('ai');
+  aiBusy = true;
+  let fix = 0;
+  aiSay('ai-msg user', (shown || prompt).slice(0, 600));
+  const out = aiSay('ai-msg', 'Reading the project...');
+  try {
+    await saveAll();
+    const messages = [{ role: 'system', content: BUILD_SYS }, ...buildHistory.slice(-6), { role: 'user', content: (await projectContext()) + '\n\n===== Request =====\n' + prompt }];
+    const chars = messages.reduce((n, m) => n + m.content.length, 0);
+    const r = await aiStream(messages, (t, thinking) => {
+      const p = progress(t);
+      out.textContent = (p.prose || (thinking ? 'Thinking...' : '...')) + p.files.map(f => '\n✓ ' + f).join('') + (p.writing ? '\n✎ Writing ' + p.writing + '...' : '');
+      out.scrollIntoView({ block: 'end' });
+    }, { numCtx: contextTokens(chars), temperature: 0.2 });
+    if (r.error) { out.textContent = r.error; return; }
+    let p = progress(r.text);
+    if (r.stopped) { out.textContent = (p.prose ? p.prose + '\n\n' : '') + 'Stopped. Nothing was changed.'; return; }
+    let ops = parseEdits(r.text);
+    if (!ops.length) {
+      // A model that answered with one complete document instead of edit blocks.
+      const doc = wholeDocument(r.text);
+      if (doc) { ops = [{ path: S.main, kind: 'write', content: doc }]; p = { ...p, prose: r.text.split('```')[0].trim() }; }
+    }
+    buildHistory.push({ role: 'user', content: prompt }, { role: 'assistant', content: (p.prose || 'Done.') + (ops.length ? '\n[Files edited: ' + [...new Set(ops.map(o => o.path))].join(', ') + ']' : '') });
+    if (!ops.length) {
+      // Edit blocks that could not be read: say so plainly instead of showing the raw markers.
+      if (/^\s*<{3,}\s*(SEARCH|WRITE)/im.test(r.text)) out.textContent = (p.prose ? p.prose + '\n\n' : '') + 'The model did not give its changes in a form Datex can apply, so nothing was changed. Ask again, or choose a larger model.';
+      else { out.textContent = r.text.trim() || 'The model gave no answer. Try again or choose another model.'; if (/```/.test(r.text)) codeButtons(out, r.text); }
+      return;
+    }
+    out.textContent = p.prose || 'Done.';
+    const res = await applyBuild(ops, shown || prompt);
+    out.appendChild(changeCard(res)); out.scrollIntoView({ block: 'end' });
+    if (!res.files.length) return;
+    await compileAndWait();
+    const errs = S.issues.filter(i => i.level === 'error').length;
+    if (!errs) aiSay('ai-note', 'Compiled without errors.');
+    else if (round < 2 && settings.aiAutoFix !== false && $('#modal').classList.contains('hidden')) fix = errs;
+    else aiSay('ai-note', `The document has ${errs} compile error${errs > 1 ? 's' : ''}. Open Logs to see them, or use Undo all above.`);
+  } catch (e) { out.textContent = 'Could not finish: ' + e.message; }
+  finally { aiBusy = false; }
+  if (fix) return buildAsk('The document does not compile after the last change. Fix the compile errors listed above with the smallest possible edits.', `Fixing ${fix} compile error${fix > 1 ? 's' : ''}`, round + 1);
+}
+// The prompt box under the editor (Ctrl+K): type what you want and the AI builds it.
+function sendPromptBar() {
+  const inp = $('#promptIn'), v = inp.value.trim(); if (!v) return;
+  if (aiBusy) return toast('The AI is still working on the last request');
+  inp.value = ''; buildAsk(v);
+}
+// Dashboard: describe a document and get a new project with a first full draft.
+async function aiNewProject() {
+  const tpls = await api('templates:list');
+  const c = modal(`<h2>Build a document with AI</h2>
+    <label>Project name</label><input id="abName" placeholder="My paper">
+    <label>What should the document be?</label><textarea id="abWhat" rows="6" placeholder="For example: A 6-page report on solar water pumps for small farms, with an introduction, how the pumps work, a cost comparison table, and a conclusion."></textarea>
+    <label>Start from</label><select id="abTpl">${tpls.map(t => `<option value="${esc(t.id)}"${t.id === 'blank' ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</select>
+    <p class="muted small">The AI writes a first draft into the project. ${isCloud() ? 'It uses the Claude (cloud) model chosen in the AI panel, so your description and the project text are sent to Anthropic.' : 'It uses the local model chosen in the AI panel, so nothing leaves this PC.'} Check every fact it writes.</p>
+    <div class="modal-actions"><button class="btn ghost" id="abNo">Cancel</button><button class="btn primary" id="abOk">Create and build</button></div>`);
+  c.style.width = '620px';
+  c.querySelector('#abName').focus();
+  c.querySelector('#abNo').onclick = closeModal;
+  c.querySelector('#abOk').onclick = async () => {
+    const what = c.querySelector('#abWhat').value.trim();
+    if (!what) return toast('Describe the document first', true);
+    if (!(await api('ai:models').catch(() => [])).length) return toast(isCloud() ? 'No Claude API key is set. Open a project and add one in the AI panel.' : 'Local AI is not running. Install Ollama and pull a model first.', true);
+    try {
+      const dir = await api('project:create', c.querySelector('#abName').value, c.querySelector('#abTpl').value);
+      closeModal(); await openProject(dir);
+      buildAsk(`Build this document: ${what}\n\nWrite the complete document now: a suitable document class and packages, a title, and every section with real draft text. Replace any template placeholder text. Keep the main file name.`, what);
+    } catch (e) { toast(e.message, true); }
+  };
+}
 
 function symbolsPanel(el) {
   el.innerHTML = `<input id="syQ" placeholder="Search symbols (alpha, arrow, sum...)"><div id="syList"></div>`;
@@ -1205,9 +1438,9 @@ const CMDS = {
   exportZip: async () => { if (!S.root) return; await saveAll(); const p = await api('project:zip', S.root); if (p) toast('Saved ' + p); },
   newFile: () => newFile(), newFolder, upload, refreshTree: () => refreshTree(),
   review: () => openPanel('review'), comments: () => openPanel('comments'), history: () => openPanel('history'), refs: () => openPanel('refs'),
-  ai: () => openPanel('ai'), symbols: () => openPanel('symbols'), git: () => openPanel('git'), search: () => openPanel('search'), wordcount: wordCountDialog
+  ai: () => openPanel('ai'), aiPrompt: () => $('#promptIn').focus(), aiNewProject: async () => { if (S.root) await showDashboard(); aiNewProject(); }, symbols: () => openPanel('symbols'), git: () => openPanel('git'), search: () => openPanel('search'), wordcount: wordCountDialog
 };
-const needsProject = new Set(['exportWord', 'exportWordAs', 'save', 'compile', 'stop', 'clean', 'syncForward', 'exportPdf', 'exportZip', 'review', 'comments', 'history', 'refs', 'ai', 'symbols', 'git', 'search', 'wordcount', 'newFile', 'newFolder', 'upload']);
+const needsProject = new Set(['exportWord', 'exportWordAs', 'save', 'compile', 'stop', 'clean', 'syncForward', 'exportPdf', 'exportZip', 'review', 'comments', 'history', 'refs', 'ai', 'aiPrompt', 'symbols', 'git', 'search', 'wordcount', 'newFile', 'newFolder', 'upload']);
 function runCmd(c) { if (needsProject.has(c) && !S.root) return toast('Open a project first'); CMDS[c] && CMDS[c](); }
 
 function wire() {
@@ -1221,6 +1454,8 @@ function wire() {
   window.datex.onCompileOutput(t => { const m = String(t).match(/downloading\s+[`'"]?([^\s`'"]+)/i); if (m && S.compiling) status('Installing packages: ' + m[1]); });
   $('#projSearch').oninput = debounce(renderProjects, 150);
   $('#drawerClose').onclick = closePanel;
+  $('#promptGo').onclick = sendPromptBar;
+  $('#promptIn').onkeydown = e => { if (e.key === 'Enter') sendPromptBar(); else if (e.key === 'Escape') editor.focus(); };
   $('#modal').onclick = e => { if (e.target.id === 'modal') closeModal(); };
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#modal').classList.contains('hidden')) closeModal(); });
   $('#tabs').onclick = e => { const x = e.target.dataset.x; if (x) return closeTab(x); const t = e.target.closest('.tab'); if (t) openFile(t.dataset.p); };
@@ -1267,5 +1502,5 @@ async function main() {
   // Keep the opening screen up long enough to read, then fade it out.
   setTimeout(() => { const sp = $('#splash'); sp.classList.add('out'); setTimeout(() => { sp.remove(); stopSplashStars(); }, 800); }, Math.max(0, 2600 - (performance.now() - splashStart)));
 }
-window.__datex = { S, openProject, compile, openFile, openPanel, syncForward, newProject, live };
+window.__datex = { S, openProject, compile, openFile, openPanel, syncForward, newProject, live, buildAsk, aiBusy: () => aiBusy };
 main().catch(e => { document.body.innerHTML = '<pre style="padding:20px;color:#f88">Datex failed to start:\n' + esc(e.stack || e.message) + '</pre>'; });
