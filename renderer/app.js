@@ -661,7 +661,15 @@ async function renderPdf() {
 function updatePageInfo() {
   const v = $('#pdfView'); let cur = 1;
   for (const p of S.pages) if (p.div.offsetTop - 60 <= v.scrollTop) cur = +p.div.dataset.page;
-  $('#pageInfo').textContent = S.pages.length ? `${cur} / ${S.pages.length}` : '';
+  $('#pageInfo').style.visibility = S.pages.length ? '' : 'hidden';
+  if (document.activeElement !== $('#pageNum')) $('#pageNum').value = S.pages.length ? cur : '';
+  $('#pageTotal').textContent = S.pages.length ? ` / ${S.pages.length}` : '';
+}
+// Type a page number in the counter and press Enter to jump to that page.
+function goToPage(n) {
+  const p = S.pages[Math.min(Math.max(1, n | 0), S.pages.length) - 1]; if (!p) return;
+  $('#pdfView').scrollTop = p.div.offsetTop - 8;
+  updatePageInfo();
 }
 function setZoom(z) { S.zoom = z; $('#zoomSel').value = z; renderPdf(); }
 function zoomStep(d) {
@@ -696,10 +704,10 @@ function openPanel(name) {
   document.querySelectorAll('.tool-btn').forEach(b => b.classList.toggle('active', b.dataset.panel === name));
   $('#drawer').classList.remove('hidden');
   const P = { review: ['Track changes', reviewPanel], comments: ['Comments', commentsPanel], history: ['History', historyPanel], refs: ['References', refsPanel],
-    git: ['Git, GitHub and Cloud', gitPanel], ai: ['AI assistant', aiPanel], share: ['Live session', live.sharePanel], symbols: ['Symbol palette', symbolsPanel], search: ['Search project', searchPanel] }[name];
+    git: ['Git, GitHub and Cloud', gitPanel], ai: ['AI assistant', aiPanel], share: ['Share', sharePanel], live: ['Live session (same network)', live.sharePanel], symbols: ['Symbol palette', symbolsPanel], search: ['Search project', searchPanel] }[name];
   $('#drawerTitle').textContent = P[0]; $('#drawerBody').innerHTML = ''; P[1]($('#drawerBody'));
 }
-function refreshPanel(name) { if (S.panel === name && !$('#drawer').classList.contains('hidden')) { const P = { share: live.sharePanel, comments: commentsPanel }[name]; if (P) { $('#drawerBody').innerHTML = ''; P($('#drawerBody')); } } }
+function refreshPanel(name) { if (S.panel === name && !$('#drawer').classList.contains('hidden')) { const P = { live: live.sharePanel, comments: commentsPanel }[name]; if (P) { $('#drawerBody').innerHTML = ''; P($('#drawerBody')); } } }
 function closePanel() { $('#drawer').classList.add('hidden'); S.panel = null; document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active')); }
 
 // Track changes: compare the working copy with the last saved version (snapshot); accept or reject each change.
@@ -966,6 +974,42 @@ function searchPanel(el) {
   el.querySelector('#srList').onclick = e => { const c = e.target.closest('.card'); if (c) openFile(c.dataset.f, +c.dataset.l); };
 }
 
+// Share the PDF, Word file or whole project: email, Gmail, Google Drive, OneDrive, Dropbox, WhatsApp, copy, save.
+function sharePanel(el) {
+  const kind = sharePanel.kind || 'pdf';
+  const T = [['email', '&#9993;', 'Email', 'Opens a new email with the file attached (Outlook), or your mail app'],
+    ['gmail', 'G', 'Gmail', 'Opens Gmail in your browser; drag the file in'],
+    ['gdrive', '&#9650;', 'Google Drive', 'Puts the file in your Drive folder, or opens Drive to upload'],
+    ['onedrive', '&#9729;', 'OneDrive', 'Puts the file in your OneDrive folder, or opens OneDrive'],
+    ['dropbox', '&#9671;', 'Dropbox', 'Puts the file in your Dropbox folder, or opens Dropbox'],
+    ['whatsapp', '&#9742;', 'WhatsApp', 'Opens WhatsApp Web; drag the file into a chat'],
+    ['copy', '&#10697;', 'Copy file', 'Copies the file so you can paste it into Teams, Slack, an email or a folder'],
+    ['save', '&#8681;', 'Save a copy', 'Save to the Desktop, a USB drive or any folder']];
+  el.innerHTML = `<p class="muted small">Send your work to anyone, even people who do not use LaTeX.</p>
+    <label>What to share</label>
+    <div class="seg" id="shKind">${[['pdf', 'PDF'], ['word', 'Word (.docx)'], ['zip', 'Project (.zip)']].map(([k, l]) => `<button class="btn sm ${k === kind ? 'primary' : ''}" data-k="${k}">${l}</button>`).join('')}</div>
+    <div class="share-grid">${T.map(([k, i, l, d]) => `<button class="share-opt" data-t="${k}" title="${d}"><span class="ico">${i}</span><span>${l}</span></button>`).join('')}</div>
+    <div id="shMsg" class="card small hidden"></div>`;
+  el.querySelectorAll('#shKind [data-k]').forEach(b => b.onclick = () => { sharePanel.kind = b.dataset.k; el.innerHTML = ''; sharePanel(el); });
+  const msg = el.querySelector('#shMsg');
+  const say = h => { msg.innerHTML = h; msg.classList.remove('hidden'); };
+  el.querySelectorAll('.share-opt').forEach(b => b.onclick = async () => {
+    const what = { pdf: 'PDF', word: 'Word file', zip: 'project ZIP' }[kind];
+    say(`Preparing the ${what}...`);
+    try {
+      if (kind !== 'pdf') await saveAll();
+      const file = await api('share:prepare', S.root, S.main, kind);
+      const r = await api('share:send', file, b.dataset.t);
+      if (!r) return msg.classList.add('hidden');
+      const name = esc(file.split(/[\/]/).pop());
+      say({ attached: `A new email is open with <b>${name}</b> attached. Add the address and send.`,
+        copied: `<b>${name}</b> is copied. Paste it (Ctrl+V) into an email, chat or folder.`,
+        saved: `Saved to <b>${esc(r.path || '')}</b>.`, shown: `<b>${name}</b> is shown in its folder.`,
+        synced: `<b>${name}</b> is in your ${esc(r.service)} folder (Datex Shared) and uploads by itself. To send a link, right-click it there and choose Share.`,
+        drag: `The page is open in your browser and <b>${name}</b> is shown in its folder. Drag the file into the page to attach or upload it.` }[r.how] || 'Done.');
+    } catch (e) { say(esc(e.message)); }
+  });
+}
 async function gitPanel(el) {
   const st = await api('git:status', S.root);
   const cfg = await api('project:config', S.root, {});
@@ -1153,7 +1197,7 @@ $x^2 + y_1$               Inline math
 
 // ---------------- Commands & wiring ----------------
 const CMDS = {
-  newProject, exportWord: () => exportWord(false), wordMenu: () => wordMenu(), wordToLatex: () => wordToLatex(null, null), exportWordAs: () => exportWord(true), joinSession: () => live.joinDialog(), packages: () => packagesDialog(), cloneRepo: () => cloneRepo(), openProject: openFolder, importZip: () => importZip(), dashboard: showDashboard, settings: settingsDialog, about: aboutDialog, toggleTheme: async () => { settings = await api('settings:set', { theme: isDark() ? 'light' : 'dark' }); applyTheme(); }, checkUpdates: () => { aboutDialog.check = true; aboutDialog(); }, guide: guideDialog,
+  newProject, exportWord: () => exportWord(false), wordMenu: () => wordMenu(), wordToLatex: () => wordToLatex(null, null), exportWordAs: () => exportWord(true), joinSession: () => live.joinDialog(), packages: () => packagesDialog(), cloneRepo: () => cloneRepo(), openProject: openFolder, importZip: () => importZip(), dashboard: showDashboard, settings: settingsDialog, about: aboutDialog, liveSession: () => S.root ? openPanel('live') : toast('Open a project first'), toggleTheme: async () => { settings = await api('settings:set', { theme: isDark() ? 'light' : 'dark' }); applyTheme(); }, checkUpdates: () => { aboutDialog.check = true; aboutDialog(); }, guide: guideDialog,
   save: () => saveAll().then(() => toast('Saved')), compile: () => compile(),
   stop: () => api('compile:stop', S.root), clean: async () => { await api('compile:clean', S.root); toast('Build files cleared'); },
   syncForward, zoomIn: () => zoomStep(1), zoomOut: () => zoomStep(-1),
@@ -1183,6 +1227,9 @@ function wire() {
   $('#tabs').onauxclick = e => { const t = e.target.closest('.tab'); if (t && e.button === 1) closeTab(t.dataset.p); };
   $('#mainSel').onchange = e => setMain(e.target.value);
   $('#draftChk').onchange = () => compile();
+  $('#pageNum').onkeydown = e => { if (e.key === 'Enter') { goToPage(+e.target.value); e.target.blur(); } else if (e.key === 'Escape') { e.target.blur(); updatePageInfo(); } };
+  $('#pageNum').onfocus = e => e.target.select();
+  $('#pageNum').onblur = () => updatePageInfo();
   $('#engineSel').onchange = e => { S.engine = e.target.value; api('project:config', S.root, { engine: S.engine }); compile(); };
   $('#autoChk').onchange = e => api('settings:set', { autoCompile: e.target.checked }).then(s => settings = s);
   $('#zoomSel').onchange = e => setZoom(e.target.value);

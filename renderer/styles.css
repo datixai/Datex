@@ -245,3 +245,12 @@ body.light .dash-head{color:var(--text)}
 
 .compile-group .auto{white-space:nowrap}
 .theme-btn{white-space:nowrap}
+
+/* Share panel */
+.seg{display:flex;gap:6px;margin:4px 0 12px}
+.share-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+.share-opt{display:flex;align-items:center;gap:10px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg2);color:var(--text);cursor:pointer;font:inherit;text-align:left}
+.share-opt:hover{background:var(--bg3)}
+.share-opt .ico{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;background:var(--bg3);font-weight:700}
+
+.page-num{width:42px;text-align:right;padding:2px 4px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--text);font:inherit}

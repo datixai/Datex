@@ -15,9 +15,18 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'datex-warm-'));
 const jobs = [];
 for (const d of fs.readdirSync(path.join(root, 'templates'))) {
   const dir = path.join(root, 'templates', d);
-  if (fs.statSync(dir).isDirectory()) jobs.push([dir, 'main.tex', d]);
+  if (fs.statSync(dir).isDirectory() && fs.existsSync(path.join(dir, 'main.tex'))) jobs.push([dir, 'main.tex', d]);
 }
 jobs.push([path.join(root, 'templates'), 'packages.tex', 'packages']);
+// Extra sets (journal classes, fonts, languages, biblatex styles, Beamer themes) from tools/warm.
+// A failure there is only a warning, so one missing package never blocks a build.
+const extra = path.join(__dirname, 'warm');
+const optional = new Set();
+if (fs.existsSync(extra)) for (const f of fs.readdirSync(extra).filter(f => f.endsWith('.tex'))) {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'datex-w-'));
+  fs.copyFileSync(path.join(extra, f), path.join(d, f));
+  jobs.push([d, f, 'warm/' + f]); optional.add('warm/' + f);
+}
 
 let failed = 0;
 for (const [dir, file, name] of jobs) {
@@ -27,7 +36,7 @@ for (const [dir, file, name] of jobs) {
     execFileSync(exe, ['-X', 'compile', file, '--outdir', out], { cwd: out, env, stdio: 'pipe' });
     console.log('ok  ', name);
   } catch (e) {
-    failed++;
+    if (!optional.has(name)) failed++;
     console.log('FAIL', name, String(e.stderr || e.message).split('\n').filter(l => /error/i.test(l)).slice(0, 3).join(' | '));
   }
 }

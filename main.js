@@ -134,6 +134,7 @@ function buildMenu() {
       { label: 'References', accelerator: 'Ctrl+Shift+B', click: cmd('refs') },
       { label: 'Symbol Palette', click: cmd('symbols') },
       { label: 'Git, GitHub and Cloud Backup', click: cmd('git') },
+      { label: 'Live Session (same network)...', click: cmd('liveSession') },
       { label: 'Clone from GitHub...', click: cmd('cloneRepo') },
       { label: 'TeX Packages...', click: cmd('packages') }
     ] },
@@ -265,8 +266,13 @@ let systemTex = null;
 // Seed the writable package cache from the cache shipped in the installer (first run only).
 async function seedTexCache() {
   const dst = texCacheDir(); const src = path.join(resDir(), 'tex-cache');
-  if (fs.existsSync(dst) || !fs.existsSync(src)) return;
-  await fsp.cp(src, dst, { recursive: true });
+  if (!fs.existsSync(src)) return;
+  // Once per app version: add the packages this version ships without touching ones already
+  // downloaded, so an update also brings its new bundled packages to existing users.
+  const mark = path.join(dst, '.datex-seeded-' + app.getVersion());
+  if (fs.existsSync(mark)) return;
+  await fsp.cp(src, dst, { recursive: true, force: false, errorOnExist: false });
+  await fsp.writeFile(mark, new Date().toISOString());
 }
 
 async function resolveEngine(engine) {
@@ -359,6 +365,9 @@ function compile(root, main, requested, only) {
         }
       }
       syncCache.delete(pdf);
+      // A file that is not bundled could not be downloaded: say so in plain words.
+      if (engine === 'builtin' && code !== 0 && /error sending request|tcp connect error|dns error|No such host is known/i.test(output))
+        issues.unshift({ level: 'error', file: main, line: null, message: 'This document needs a package or font that is not on this PC yet, and Datex could not reach the internet to download it. Connect to the internet once and click Recompile.', detail: '' });
       if (draftOf) {
         await fsp.rm(path.join(root, DRAFT), { force: true }).catch(() => {});
         for (const i of issues) if (i.file === main || i.file === './' + main) i.file = draftOf;
@@ -855,6 +864,72 @@ async function cloudBackup(root, target) {
   await fsp.cp(root, dst, { recursive: true, force: true, filter: src => !skip(src) });
   return dst;
 }
+// ---------- Share: send the PDF, Word file or project ZIP by email, cloud drive, etc. ----------
+const shareDir = () => path.join(app.getPath('userData'), 'share');
+// Make the file to share in a temporary share folder, named after the project.
+handle('share:prepare', async (root, main, kind) => {
+  const name = path.basename(root).replace(/[<>:"/\\|?*]+/g, ' ').trim() || 'Document';
+  const dir = path.join(shareDir(), String(Date.now()));
+  await fsp.rm(shareDir(), { recursive: true, force: true }).catch(() => {});
+  await fsp.mkdir(dir, { recursive: true });
+  if (kind === 'pdf') {
+    const pdf = path.join(root, '.datex', 'build', main.replace(/\.tex$/i, '.pdf'));
+    if (!fs.existsSync(pdf)) throw new Error('There is no PDF yet. Click Recompile first.');
+    const out = path.join(dir, name + '.pdf'); await fsp.copyFile(pdf, out); return out;
+  }
+  if (kind === 'word') return (await exportWord(root, main, path.join(dir, name + '.docx'))).file;
+  if (kind === 'zip') {
+    const out = path.join(dir, name + '.zip');
+    const files = (await git(root, ['ls-files', '-co', '--exclude-standard'])).stdout.split('\n').filter(Boolean);
+    const list = path.join(dir, 'files.txt'); await fsp.writeFile(list, files.join('\n'));
+    const t = await run(path.join(process.env.SystemRoot || 'C:/Windows', 'System32', 'tar.exe'), ['-a', '-c', '-f', out, '-T', list], { cwd: root });
+    await fsp.rm(list, { force: true });
+    if (!t.ok) throw new Error('Could not create the ZIP file.');
+    return out;
+  }
+  throw new Error('Unknown file type');
+});
+// The file path is passed through an environment variable, never inside the script text.
+const ps = (script, file) => run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...process.env, DATEX_FILE: file } });
+const WEB = { gmail: 'https://mail.google.com/mail/?view=cm&fs=1', gdrive: 'https://drive.google.com/drive/my-drive', onedrive: 'https://onedrive.live.com/', dropbox: 'https://www.dropbox.com/home', whatsapp: 'https://web.whatsapp.com/' };
+handle('share:send', async (file, target) => {
+  if (!file || !fs.existsSync(file)) throw new Error('The file to share is missing. Try again.');
+  const subject = path.basename(file);
+  if (target === 'email') {
+    // Outlook (desktop) opens a new email with the file already attached.
+    const r = await ps('$o = New-Object -ComObject Outlook.Application; $m = $o.CreateItem(0); $m.Subject = [IO.Path]::GetFileName($env:DATEX_FILE); $null = $m.Attachments.Add($env:DATEX_FILE); $m.Display()', file);
+    if (r.ok) return { how: 'attached' };
+    await shell.openExternal('mailto:?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent('Please find ' + subject + ' attached.'));
+    shell.showItemInFolder(file);
+    return { how: 'drag' };
+  }
+  if (target === 'copy') {
+    const r = await ps('Set-Clipboard -Path $env:DATEX_FILE', file);
+    if (!r.ok) throw new Error('Could not copy the file.');
+    return { how: 'copied' };
+  }
+  if (target === 'save') {
+    const r = await dialog.showSaveDialog(win, { defaultPath: path.join(app.getPath('desktop'), subject) });
+    if (r.canceled) return null;
+    await fsp.copyFile(file, r.filePath); shell.showItemInFolder(r.filePath);
+    return { how: 'saved', path: r.filePath };
+  }
+  if (target === 'folder') { shell.showItemInFolder(file); return { how: 'shown' }; }
+  if (['gdrive', 'onedrive', 'dropbox'].includes(target)) {
+    // With the desktop sync app installed, put the file in a "Datex Shared" folder: it uploads by itself.
+    const want = { gdrive: 'Google Drive', onedrive: 'OneDrive', dropbox: 'Dropbox' }[target];
+    const local = cloudFolders().find(c => c.name.startsWith(want));
+    if (local) {
+      const dst = path.join(local.path, 'Datex Shared'); await fsp.mkdir(dst, { recursive: true });
+      const out = path.join(dst, subject); await fsp.copyFile(file, out); shell.showItemInFolder(out);
+      return { how: 'synced', path: out, service: want };
+    }
+  }
+  if (!WEB[target]) throw new Error('Unknown share option');
+  await shell.openExternal(target === 'gmail' ? WEB.gmail + '&su=' + encodeURIComponent(subject) : WEB[target]);
+  shell.showItemInFolder(file);
+  return { how: 'drag' };
+});
 handle('cloud:detect', async () => cloudFolders());
 handle('cloud:pick', async () => { const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], title: 'Choose your cloud folder (Google Drive, OneDrive, Dropbox)' }); return r.canceled ? null : r.filePaths[0]; });
 handle('cloud:backup', cloudBackup);

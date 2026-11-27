@@ -99,7 +99,7 @@ function attach() {
     ctx.api('comments:save', S.root, S.comments); ctx.applyCommentDecorations(); ctx.refreshPanel('comments');
   });
   session.awareness.on('change', () => { renderPeers(); renderCursors(); });
-  sendCursor(); renderPeers(); ctx.refreshPanel('share');
+  sendCursor(); renderPeers(); ctx.refreshPanel('live');
 }
 
 function onStatus(state, reason) {
@@ -211,7 +211,7 @@ function renderPeers() {
   const el = document.querySelector('#peerDots'); if (!el) return;
   const peers = session ? session.peers() : [];
   el.innerHTML = peers.length > 1 ? peers.map(p => `<span class="peer-dot c${p.color}" title="${esc(p.name)}${p.self ? ' (you)' : ''}">${esc(p.name.slice(0, 1).toUpperCase())}</span>`).join('') : '';
-  if (ctx.S.panel === 'share') ctx.refreshPanel('share');
+  if (ctx.S.panel === 'live') ctx.refreshPanel('live');
 }
 export function rebindActive() { renderCursors(); sendCursor(); }
 
@@ -251,5 +251,5 @@ function cleanup() {
   const s = session; session = null; role = null;
   if (s) s.close();
   if (cursorDeco) cursorDeco.clear();
-  renderPeers(); ctx.refreshPanel('share');
+  renderPeers(); ctx.refreshPanel('live');
 }
