@@ -12,6 +12,7 @@ const { spawn, execFile } = require('child_process');
 const { parseLog } = require('./lib/latexlog');
 const { parseBib } = require('./lib/bibtex');
 const synctex = require('./lib/synctex');
+const { arxivUrl, arxivResults } = require('./lib/arxiv');
 
 const APP_DIR = __dirname;
 // Tests can run several isolated copies of the app side by side.
@@ -73,6 +74,10 @@ function createWindow() {
 function selfTest() {
   const wc = win.webContents;
   wc.on('console-message', (e) => console.log('[renderer]', e.level, e.message));
+  const t0 = Date.now(), at = () => Math.round((Date.now() - t0) / 1000) + 's';
+  wc.on('render-process-gone', (_e, d) => console.log('[gone] window', at(), JSON.stringify(d)));
+  app.on('child-process-gone', (_e, d) => console.log('[gone] child', at(), JSON.stringify(d)));
+  wc.on('did-start-navigation', (_e, url, inPlace, mainFrame) => { if (mainFrame) console.log('[nav]', at(), url, inPlace); });
   wc.once('did-finish-load', async () => {
     const wait = ms => new Promise(r => setTimeout(r, ms));
     if (process.env.DATEX_SPLASHSHOT) { await wait(1300); fs.writeFileSync(process.env.DATEX_SPLASHSHOT, (await wc.capturePage()).toPNG()); }
@@ -486,22 +491,28 @@ async function aiChat(id, messages, model, opts = {}) {
   const ctrl = new AbortController();
   aiJobs.set(id, ctrl);
   try {
-    const body = { model: model || settings.aiModel, messages, stream: true };
+    // Pictures attached to a message go to Ollama as base64 strings (vision models only).
+    const body = { model: model || settings.aiModel, stream: true, messages: messages.map(m => m.images && m.images.length ? { role: m.role, content: m.content, images: m.images.map(i => i.data) } : { role: m.role, content: m.content }) };
     if (opts.numCtx > 0) body.options = { num_ctx: Math.min(131072, Math.round(opts.numCtx)) };
     // Edits must copy text from the files exactly, so the Build chat asks for a low temperature.
     if (typeof opts.temperature === 'number') body.options = { ...body.options, temperature: Math.max(0, Math.min(2, opts.temperature)) };
-    const res = await fetch(settings.ollamaUrl + '/api/chat', {
-      method: 'POST', signal: ctrl.signal, headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
+    // Node's http module, not fetch: fetch gives up when the server is silent for five minutes,
+    // and a local model on a slow PC can take longer than that to read a long prompt.
+    const url = new URL(settings.ollamaUrl.replace(/\/+$/, '') + '/api/chat');
+    const res = await new Promise((resolve, reject) => {
+      const req = require(url.protocol === 'https:' ? 'https' : 'http').request(url, { method: 'POST', signal: ctrl.signal, headers: { 'Content-Type': 'application/json' } }, resolve);
+      req.on('error', reject);
+      req.end(JSON.stringify(body));
     });
-    if (!res.ok) {
-      let why = ''; try { why = JSON.parse(await res.text()).error || ''; } catch {}
-      throw new Error(why || 'AI model error (' + res.status + ')');
+    res.setEncoding('utf8');
+    if (res.statusCode !== 200) {
+      let text = ''; for await (const c of res) text += c;
+      let why = ''; try { why = JSON.parse(text).error || ''; } catch {}
+      throw new Error(why || 'AI model error (' + res.statusCode + ')');
     }
-    const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
-    for (;;) {
-      const { value, done } = await reader.read(); if (done) break;
-      buf += dec.decode(value, { stream: true });
+    let buf = '';
+    for await (const chunk of res) {
+      buf += chunk;
       let nl;
       while ((nl = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
@@ -515,7 +526,7 @@ async function aiChat(id, messages, model, opts = {}) {
     }
     send('ai:done', { id });
   } catch (e) {
-    send('ai:done', { id, error: e.name === 'AbortError' ? null : 'Local AI is not available: ' + e.message });
+    send('ai:done', { id, error: e.name === 'AbortError' || e.code === 'ABORT_ERR' ? null : e.code === 'ECONNREFUSED' ? 'Local AI is not running. Start Ollama and try again.' : 'Local AI error: ' + e.message });
   } finally { aiJobs.delete(id); }
 }
 
@@ -539,7 +550,11 @@ async function cloudChat(id, messages, model) {
     const params = {
       model, max_tokens: 64000,
       system: messages.filter(m => m.role === 'system').map(m => m.content).join('\n\n'),
-      messages: messages.filter(m => m.role !== 'system').map(m => ({ role: m.role, content: m.content })),
+      messages: messages.filter(m => m.role !== 'system').map(m => ({
+        role: m.role,
+        // Attached pictures go before the text, as image blocks.
+        content: m.images && m.images.length ? [...m.images.map(i => ({ type: 'image', source: { type: 'base64', media_type: i.mime, data: i.data } })), { type: 'text', text: m.content }] : m.content
+      })),
       output_config: { effort: 'medium' }
     };
     // If the model declines a request, the API answers with a fallback model in the same call.
@@ -714,9 +729,24 @@ handle('comments:load', async (root) => { try { return JSON.parse(await fsp.read
 handle('comments:save', async (root, list) => { await fsp.mkdir(path.join(root, '.datex'), { recursive: true }); await fsp.writeFile(path.join(root, '.datex', 'comments.json'), JSON.stringify(list, null, 2)); });
 handle('refs:project', projectBib);
 handle('refs:doi', bibFromDoi);
+// Literature search on arXiv. Only the search words are sent. `taken`: citation keys already in use.
+handle('refs:arxiv', async (query, taken) => {
+  let xml;
+  try { xml = await fetchText(arxivUrl(query, 6), { 'User-Agent': 'Datex LaTeX editor' }); }
+  catch (e) { throw new Error(/Enter a few words/.test(e.message) ? e.message : 'Could not reach arXiv. Check the internet connection and try again.'); }
+  return arxivResults(xml, Array.isArray(taken) ? taken : []);
+});
 handle('refs:zotero', async () => parseBib(await zoteroLibrary()));
 handle('ai:models', aiModels);
 handle('ai:chat', async (id, messages, model, opts) => { settings.aiProvider === 'claude' ? cloudChat(id, messages, model) : aiChat(id, messages, model, opts || {}); return id; });
+// Can this model read pictures? Claude models can; a local model must list the "vision" capability.
+handle('ai:vision', async (model) => {
+  if (settings.aiProvider === 'claude') return true;
+  try {
+    const r = await fetch(settings.ollamaUrl + '/api/show', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: model || settings.aiModel }) });
+    return ((await r.json()).capabilities || []).includes('vision');
+  } catch { return false; }
+});
 handle('ai:cloudStatus', async () => ({ ready: cloudReady(), stored: fs.existsSync(cloudKeyFile()), models: CLOUD_MODELS }));
 // Save the key (encrypted), or remove it when called with nothing.
 handle('ai:cloudKey', async (key) => {

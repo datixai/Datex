@@ -1,7 +1,7 @@
 // AI Build chat: reading edit blocks out of a model reply and applying them to project files.
 import test from 'node:test';
 import assert from 'node:assert';
-import { parseEdits, applyOps, progress, wholeDocument, safePath, minimalEdit, buildContext, diffStat } from '../renderer/aibuild.js';
+import { parseSearches, papersMessage, parseEdits, applyOps, progress, wholeDocument, safePath, minimalEdit, buildContext, diffStat } from '../renderer/aibuild.js';
 
 const reply = [
   'I will add a methods section and a new chapter file.',
@@ -114,4 +114,14 @@ test('buildContext puts the main file first and shortens what does not fit', () 
   assert.match(ctx, /z\.tex \(shortened/);
   assert.match(ctx, /main\.tex:3: Undefined control sequence/);
   assert.match(ctx, /picked/);
+});
+
+test('literature search requests and the results message', () => {
+  assert.deepEqual(parseSearches('ARXIV: solar water pumps efficiency\n**ARXIV:** "photovoltaic irrigation"\nARXIV: solar water pumps efficiency\nARXIV: c\nARXIV: d'), ['solar water pumps efficiency', 'photovoltaic irrigation', 'c']);
+  assert.deepEqual(parseSearches('I looked on arxiv: nothing is needed here.'), []);
+  const msg = papersMessage([{ key: 'lee2020solar', title: 'Solar pumps', authors: ['A Lee', 'B Kim', 'C Roe', 'D Poe', 'E Moe'], year: '2020', summary: 'We test pumps.', bibtex: '@article{lee2020solar,\n  title = {Solar pumps}\n}' }], 'refs.bib');
+  assert.match(msg, /\[lee2020solar\] Solar pumps\nA Lee, B Kim, C Roe, D Poe et al\. \(2020\)/);
+  assert.match(msg, /to refs\.bib with an empty SEARCH block\./);
+  assert.match(papersMessage([], null), /no papers/);
+  assert.match(buildContext({ files: [], main: 'main.tex', active: 'a.tex', cursorLine: 12 }), /a\.tex \(the cursor is at line 12\)/);
 });

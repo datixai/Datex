@@ -2,7 +2,7 @@
 import * as pdfjsLib from '../node_modules/pdfjs-dist/build/pdf.mjs';
 import { LATEX_COMMANDS, ENVIRONMENTS, SYMBOLS, AI_ACTIONS } from './data.js';
 import * as live from './live.js';
-import { BUILD_SYS, EDITABLE, parseEdits, applyOps, progress, wholeDocument, minimalEdit, buildContext, contextTokens } from './aibuild.js';
+import { BUILD_SYS, EDITABLE, parseSearches, papersMessage, parseEdits, applyOps, progress, wholeDocument, minimalEdit, buildContext, contextTokens } from './aibuild.js';
 import { starfield } from './stars.js';
 const splashStart = performance.now();
 const stopSplashStars = starfield(document.querySelector('#splash .sky'), { density: 0.00028 });
@@ -845,16 +845,18 @@ async function refreshRefs() { try { S.bib = await api('refs:project', S.root); 
 function refsPanel(el) {
   el.innerHTML = `<div class="row"><input id="rfQ" placeholder="Search by author, title, year, keyword..."></div>
     <div class="row"><input id="rfDoi" placeholder="Add by DOI, for example 10.1038/nature14539"><button class="btn primary" id="rfAdd">Add</button></div>
+    <div class="row"><input id="rfAx" placeholder="Find papers on arXiv, for example: solar water pumping"><button class="btn" id="rfAxGo">Search</button></div>
     <div class="row"><button class="btn" id="rfZot">Import from Zotero</button><button class="btn ghost" id="rfNew">New .bib file</button></div>
     <div id="rfList"></div>`;
   let source = 'project', zot = [];
   const list = () => {
     const q = el.querySelector('#rfQ').value.toLowerCase().split(/\s+/).filter(Boolean);
-    const all = source === 'zotero' ? zot : S.bib;
+    const all = source === 'project' ? S.bib : zot;
+    const ext = source !== 'project';
     const res = all.filter(b => { const h = [b.key, b.fields.title, b.fields.author, b.fields.year, b.fields.journal, b.fields.booktitle, b.fields.keywords].join(' ').toLowerCase(); return q.every(w => h.includes(w)); }).slice(0, 200);
-    el.querySelector('#rfList').innerHTML = `<div class="muted small">${source === 'zotero' ? 'Zotero library' : 'This project'}: ${res.length} of ${all.length}${source === 'zotero' ? ' · <a href="#" id="rfBack">back to project</a>' : ''}</div>` +
-      res.map((b, i) => `<div class="card"><div class="mono">${esc(b.key)}</div><div>${esc(b.fields.title || '(no title)')}</div><div class="muted small">${esc((b.fields.author || '').slice(0, 120))} ${b.fields.year ? '· ' + esc(b.fields.year) : ''}</div>
-        <div class="row" style="margin-top:6px">${source === 'zotero' ? `<button class="btn sm primary" data-imp="${i}">Add to project</button>` : `<button class="btn sm primary" data-cite="${esc(b.key)}">Insert \\cite</button><button class="btn sm ghost" data-goto="${esc(b.file)}" data-key="${esc(b.key)}">Open</button>`}</div></div>`).join('');
+    el.querySelector('#rfList').innerHTML = `<div class="muted small">${source === 'zotero' ? 'Zotero library' : source === 'arxiv' ? 'arXiv results' : 'This project'}: ${res.length} of ${all.length}${ext ? ' · <a href="#" id="rfBack">back to project</a>' : ''}</div>` +
+      res.map((b, i) => `<div class="card"><div class="mono">${esc(b.key)}</div><div>${esc(b.fields.title || '(no title)')}</div><div class="muted small">${esc((b.fields.author || '').slice(0, 120))} ${b.fields.year ? '· ' + esc(b.fields.year) : ''}</div>${b.summary ? `<div class="muted small" style="margin-top:4px">${esc(b.summary.slice(0, 260))}${b.summary.length > 260 ? '...' : ''}</div>` : ''}
+        <div class="row" style="margin-top:6px">${ext ? `<button class="btn sm primary" data-imp="${i}">Add to project</button>${b.url ? `<button class="btn sm ghost" data-link="${esc(b.url)}">Open on arXiv</button>` : ''}` : `<button class="btn sm primary" data-cite="${esc(b.key)}">Insert \\cite</button><button class="btn sm ghost" data-goto="${esc(b.file)}" data-key="${esc(b.key)}">Open</button>`}</div></div>`).join('');
     el.querySelector('#rfList').dataset.res = '';
     list.res = res;
   };
@@ -873,6 +875,18 @@ function refsPanel(el) {
     try { const raw = await api('refs:doi', doi); await appendBib(raw); el.querySelector('#rfDoi').value = ''; toast('Reference added'); source = 'project'; list(); }
     catch (e) { toast(e.message, true); }
   };
+  // arXiv search: only the words typed here are sent to arxiv.org.
+  const axGo = async () => {
+    const q = el.querySelector('#rfAx').value.trim(); if (!q) return;
+    const b = el.querySelector('#rfAxGo'); b.disabled = true; b.textContent = 'Searching...';
+    try {
+      zot = (await api('refs:arxiv', q, S.bib.map(x => x.key))).map(p => ({ key: p.key, raw: p.bibtex, url: p.url, summary: p.summary, fields: { title: p.title, author: p.authors.join(', '), year: p.year } }));
+      source = 'arxiv'; el.querySelector('#rfQ').value = ''; list();
+    } catch (e) { toast(e.message, true); }
+    b.disabled = false; b.textContent = 'Search';
+  };
+  el.querySelector('#rfAxGo').onclick = axGo;
+  el.querySelector('#rfAx').onkeydown = e => { if (e.key === 'Enter') axGo(); };
   el.querySelector('#rfZot').onclick = async () => { try { zot = await api('refs:zotero'); source = 'zotero'; list(); } catch (e) { toast(e.message, true); } };
   el.querySelector('#rfNew').onclick = async () => { const n = await promptModal('New bibliography', 'File name', 'references.bib'); if (n) { await api('fs:write', S.root, n.endsWith('.bib') ? n : n + '.bib', ''); refreshTree(); } };
   el.querySelector('#rfList').onclick = async e => {
@@ -896,7 +910,17 @@ let aiHistory = [], buildHistory = [], aiBusy = false;
 // The conversation stays when the panel is closed or another panel is opened.
 const aiLogEl = document.createElement('div'); aiLogEl.id = 'aiLog'; aiLogEl.className = 'ai-log';
 const aiMode = () => settings.aiMode === 'ask' ? 'ask' : 'build';
-function resetAi() { aiHistory = []; buildHistory = []; aiLogEl.innerHTML = ''; }
+function resetAi() { aiHistory = []; buildHistory = []; aiImages.length = 0; aiLogEl.innerHTML = ''; }
+// Pictures waiting to go with the next message (a photo of a whiteboard, a screenshot of a table).
+const aiImages = [];
+// Read a picture, shrink it so its long side is at most 1568 px, and keep it as JPEG.
+async function readPicture(file) {
+  let bmp; try { bmp = await createImageBitmap(file); } catch { throw new Error('Could not read ' + (file.name || 'the picture') + '. Use a PNG or JPEG file.'); }
+  const k = Math.min(1, 1568 / Math.max(bmp.width, bmp.height));
+  const cv = document.createElement('canvas'); cv.width = Math.max(1, Math.round(bmp.width * k)); cv.height = Math.max(1, Math.round(bmp.height * k));
+  const g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height); g.drawImage(bmp, 0, 0, cv.width, cv.height);
+  return { mime: 'image/jpeg', data: cv.toDataURL('image/jpeg', 0.9).split(',')[1], name: file.name || 'picture' };
+}
 function aiSay(cls, text) { const d = document.createElement('div'); d.className = cls; d.textContent = text; aiLogEl.appendChild(d); d.scrollIntoView({ block: 'end' }); return d; }
 
 async function aiPanel(el) {
@@ -908,8 +932,10 @@ async function aiPanel(el) {
     <div class="row"><select id="aiModel">${models.map(m => `<option${m === picked ? ' selected' : ''}>${esc(m)}</option>`).join('') || `<option value="">${cloud ? 'No API key set' : 'Local AI is not running'}</option>`}</select>${cloud ? '<button class="btn sm ghost" id="aiKey" title="Change or remove the Claude API key">API key</button>' : ''}</div>
     <div class="chips">${AI_ACTIONS.map((a, i) => `<span class="chip" data-a="${i}" title="${esc(a.hint)}">${esc(a.label)}</span>`).join('')}</div>
     <div id="aiLogHost"></div>
+    <div id="aiPics" class="ai-pics"></div>
     <textarea id="aiIn" rows="3"></textarea>
-    <div class="row"><button class="btn ai" id="aiSend">Send</button><button class="btn ghost" id="aiStop">Stop</button><button class="btn ghost" id="aiClear">New chat</button></div>
+    <div class="row"><button class="btn ai" id="aiSend">Send</button><button class="btn ghost" id="aiStop">Stop</button><button class="btn ghost" id="aiPic" title="Attach a photo or screenshot of an equation, table, diagram or notes and the AI turns it into LaTeX. You can also paste a picture into the box.">+ Picture</button><button class="btn ghost" id="aiClear">New chat</button></div>
+    <input type="file" id="aiPicFile" accept="image/*" multiple class="hidden">
     <p class="muted small">${cloud ? '<b>Cloud model.</b> Each request sends the text of this project\'s files (.tex, .bib and similar) to Anthropic over the internet, and is charged to your API key. Switch to Local to keep everything on this PC.' : 'Runs on this computer with local models. Your document never leaves your PC.'}</p>`;
   el.querySelector('#aiLogHost').replaceWith(aiLogEl);
   aiLogEl.querySelector('.ai-setup')?.remove();
@@ -935,11 +961,24 @@ async function aiPanel(el) {
   el.querySelector('#aiModeSeg').onclick = async e => { const m = e.target.dataset.m; if (!m) return; settings = await api('settings:set', { aiMode: m }); showMode(); };
   el.querySelector('#aiModel').onchange = e => api('settings:set', { [cloud ? 'cloudModel' : 'aiModel']: e.target.value }).then(s => settings = s);
   el.querySelector('.chips').onclick = e => { const i = e.target.dataset.a; if (i !== undefined) runAction(AI_ACTIONS[i], el); };
-  el.querySelector('#aiSend').onclick = () => {
-    const v = el.querySelector('#aiIn').value.trim(); if (!v) return;
+  const drawPics = () => {
+    el.querySelector('#aiPics').innerHTML = aiImages.map((p, i) => `<span class="ai-pic"><img src="data:${p.mime};base64,${p.data}" alt=""><b data-rm="${i}" title="Remove">&times;</b></span>`).join('');
+  };
+  drawPics();
+  const addPics = async files => { for (const f of files) { if (aiImages.length >= 4) { toast('Four pictures at most'); break; } try { aiImages.push(await readPicture(f)); } catch (e) { toast(e.message, true); } } drawPics(); };
+  el.querySelector('#aiPics').onclick = e => { if (e.target.dataset.rm !== undefined) { aiImages.splice(+e.target.dataset.rm, 1); drawPics(); } };
+  el.querySelector('#aiPic').onclick = () => el.querySelector('#aiPicFile').click();
+  el.querySelector('#aiPicFile').onchange = async e => { await addPics([...e.target.files]); e.target.value = ''; };
+  el.querySelector('#aiIn').onpaste = e => { const pics = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith('image/')); if (pics.length) { e.preventDefault(); addPics(pics); } };
+  el.querySelector('#aiSend').onclick = async () => {
+    let v = el.querySelector('#aiIn').value.trim(); if (!v && !aiImages.length) return;
     if (aiBusy) return toast('The AI is still working on the last request');
+    if (aiImages.length && !await api('ai:vision', el.querySelector('#aiModel').value).catch(() => false))
+      return toast('This local model cannot read pictures. Choose a vision model in the list, or Claude (cloud).', true);
+    const pics = aiImages.splice(0); drawPics();
+    if (!v) v = aiMode() === 'build' ? 'Turn what the attached picture shows into LaTeX and add it at the cursor.' : 'Write what the attached picture shows as LaTeX.';
     el.querySelector('#aiIn').value = '';
-    aiMode() === 'build' ? buildAsk(v) : aiAsk(el, v, v);
+    aiMode() === 'build' ? buildAsk(v, null, 0, pics) : aiAsk(el, v, v, null, pics);
   };
   el.querySelector('#aiIn').onkeydown = e => { if (e.key === 'Enter' && e.ctrlKey) el.querySelector('#aiSend').click(); };
   el.querySelector('#aiStop').onclick = () => aiAsk.id && api('ai:stop', aiAsk.id);
@@ -1011,14 +1050,17 @@ function aiStream(messages, onText, opts) {
     api('ai:chat', id, messages, $('#aiModel')?.value || (isCloud() ? settings.cloudModel : settings.aiModel), opts).catch(e => { offC(); offD(); resolve({ text, error: e.message, stopped: false }); });
   });
 }
-async function aiAsk(el, prompt, shown, replaceRange) {
+const picNote = pics => pics && pics.length ? `  [${pics.length} picture${pics.length > 1 ? 's' : ''} attached]` : '';
+async function aiAsk(el, prompt, shown, replaceRange, pics) {
   if (aiBusy) return toast('The AI is still working on the last request');
   aiBusy = true;
-  aiSay('ai-msg user', shown.slice(0, 400));
+  aiSay('ai-msg user', shown.slice(0, 400) + picNote(pics));
   const out = aiSay('ai-msg', '...');
-  aiHistory.push({ role: 'user', content: prompt });
+  const mine = { role: 'user', content: prompt, ...(pics && pics.length ? { images: pics } : {}) };
+  aiHistory.push(mine);
   const r = await aiStream([{ role: 'system', content: SYS }, ...aiHistory.slice(-10)], (t, thinking) => { out.textContent = t || (thinking ? 'Thinking...' : '...'); out.scrollIntoView({ block: 'end' }); });
   aiBusy = false;
+  delete mine.images; // Pictures are sent once, not again with every later message.
   if (r.error) { out.textContent = r.error; return; }
   aiHistory.push({ role: 'assistant', content: r.text });
   if (r.text.trim()) codeButtons(out, r.text, replaceRange);
@@ -1035,7 +1077,7 @@ async function projectContext() {
     let text; try { text = f ? f.model.getValue() : await api('fs:read', S.root, p); } catch { continue; }
     if (text.length <= 600000) files.push({ path: p, text });
   }
-  return buildContext({ files, main: S.main, active: S.active, selection: selectionText(), issues: S.issues, budget: isCloud() ? 400000 : settings.aiContextChars || 60000 });
+  return buildContext({ files, main: S.main, active: S.active, selection: selectionText(), cursorLine: S.active && editor.getPosition() ? editor.getPosition().lineNumber : null, issues: S.issues, budget: isCloud() ? 400000 : settings.aiContextChars || 60000 });
 }
 const posAt = (text, off) => { const before = text.slice(0, off); const l = before.split('\n').length; return { l, c: off - before.lastIndexOf('\n') }; };
 let aiMarks = null;
@@ -1106,23 +1148,76 @@ async function compileAndWait() { while (S.compiling) await sleep(300); await co
 
 // One turn of the Build chat: send the project and the request, apply the edits that come back,
 // compile, and if the new text does not compile let the AI correct it (twice at most).
-async function buildAsk(prompt, shown, round = 0) {
+// Run the arXiv searches the AI asked for and show what was found. Only the search words leave
+// the PC, and the user is asked before the first search. Returns the text that goes back to the AI.
+async function literatureSearch(queries, out) {
+  if (!settings.aiArxiv) {
+    const ok = await confirmModal('Search arXiv for papers?', `The AI wants to look for papers on arXiv with these words: ${queries.map(q => '"' + q + '"').join(', ')}. Only the search words are sent to arxiv.org, not your document. Datex will not ask again.`, 'Search arXiv');
+    if (!ok) { out.textContent = 'Literature search was not allowed, so no new papers were looked up.'; return { keys: [], text: 'The user did not allow a literature search. Carry out the request without new citations: do not invent any, and say in your first sentence that no papers were looked up.' }; }
+    settings = await api('settings:set', { aiArxiv: true });
+  }
+  const papers = [], taken = S.bib.map(b => b.key), lines = [];
+  for (const q of queries) {
+    out.textContent = lines.concat('Searching arXiv: ' + q + '...').join('\n');
+    try {
+      // Six papers in all at most: enough to choose from, small enough for a local model to read.
+      const found = (await api('refs:arxiv', q, taken)).filter(p => !papers.some(x => x.id === p.id)).slice(0, Math.max(0, 6 - papers.length));
+      for (const p of found) { papers.push(p); taken.push(p.key); }
+      lines.push(`Searched arXiv: ${q} (${found.length} paper${found.length === 1 ? '' : 's'})`);
+    } catch (e) { lines.push(`Searched arXiv: ${q} (failed: ${e.message})`); }
+  }
+  out.textContent = lines.join('\n');
+  if (papers.length) {
+    const list = document.createElement('div'); list.className = 'ai-papers';
+    list.innerHTML = papers.map(p => `<a href="#" data-link="${esc(p.url)}" title="Open on arxiv.org">${esc(p.title)}</a><span class="muted small"> ${esc((p.authors[0] || '').split(' ').pop())}${p.authors.length > 1 ? ' et al.' : ''} ${esc(p.year)}</span>`).map(h => `<div>${h}</div>`).join('');
+    out.appendChild(list);
+  }
+  return { keys: papers.map(p => p.key), text: papersMessage(papers, allFiles().find(f => /\.bib$/i.test(f)) || null) };
+}
+const bibKeysIn = text => [...String(text || '').matchAll(/@(\w+)\s*\{\s*([^,\s]+)\s*,/g)].filter(m => !/^(comment|string|preamble)$/i.test(m[1])).map(m => m[2]);
+// References the AI added to .bib files that did not come from a search in this request.
+function unverifiedRefs(res, found) {
+  const out = [];
+  for (const f of res.files) {
+    if (!/\.bib$/i.test(f.path)) continue;
+    const had = new Set(bibKeysIn(f.before));
+    for (const k of bibKeysIn(f.after)) if (!had.has(k) && !found.includes(k) && !out.includes(k)) out.push(k);
+  }
+  return out;
+}
+async function buildAsk(prompt, shown, round = 0, pics) {
   if (!S.root) return toast('Open a project first');
   if (aiBusy) return toast('The AI is still working on the last request');
   if (S.panel !== 'ai' || $('#drawer').classList.contains('hidden')) openPanel('ai');
   aiBusy = true;
   let fix = 0;
-  aiSay('ai-msg user', (shown || prompt).slice(0, 600));
-  const out = aiSay('ai-msg', 'Reading the project...');
+  aiSay('ai-msg user', (shown || prompt).slice(0, 600) + picNote(pics));
+  let out = aiSay('ai-msg', 'Reading the project...');
   try {
     await saveAll();
-    const messages = [{ role: 'system', content: BUILD_SYS }, ...buildHistory.slice(-6), { role: 'user', content: (await projectContext()) + '\n\n===== Request =====\n' + prompt }];
-    const chars = messages.reduce((n, m) => n + m.content.length, 0);
-    const r = await aiStream(messages, (t, thinking) => {
-      const p = progress(t);
-      out.textContent = (p.prose || (thinking ? 'Thinking...' : '...')) + p.files.map(f => '\n✓ ' + f).join('') + (p.writing ? '\n✎ Writing ' + p.writing + '...' : '');
-      out.scrollIntoView({ block: 'end' });
-    }, { numCtx: contextTokens(chars), temperature: 0.2 });
+    const messages = [{ role: 'system', content: BUILD_SYS }, ...buildHistory.slice(-6), { role: 'user', content: (await projectContext()) + '\n\n===== Request =====\n' + prompt, ...(pics && pics.length ? { images: pics } : {}) }];
+    let r, searched = false, found = [];
+    for (;;) {
+      const chars = messages.reduce((n, m) => n + m.content.length, 0);
+      const box = out;
+      r = await aiStream(messages, (t, thinking) => {
+        const p = progress(t);
+        // A reply that only asks for a literature search is shown as that, not as raw lines.
+        const asking = !p.files.length && !p.writing && parseSearches(t).length;
+        box.textContent = asking ? 'Looking for papers...' : (p.prose || (thinking ? 'Thinking...' : '...')) + p.files.map(f => '\n✓ ' + f).join('') + (p.writing ? '\n✎ Writing ' + p.writing + '...' : '');
+        box.scrollIntoView({ block: 'end' });
+      }, { numCtx: contextTokens(chars), temperature: 0.2 });
+      if (r.error || r.stopped || searched) break;
+      const queries = parseSearches(r.text);
+      if (!queries.length) break;
+      // The AI asked for papers: search, hand it the results and let it continue. Edits written
+      // in the same reply are dropped, because they were made before it had seen any paper.
+      searched = true;
+      const results = await literatureSearch(queries, out);
+      found = results.keys;
+      messages.push({ role: 'assistant', content: queries.map(q => 'ARXIV: ' + q).join('\n') }, { role: 'user', content: results.text });
+      out = aiSay('ai-msg', 'Reading the papers...');
+    }
     if (r.error) { out.textContent = r.error; return; }
     let p = progress(r.text);
     if (r.stopped) { out.textContent = (p.prose ? p.prose + '\n\n' : '') + 'Stopped. Nothing was changed.'; return; }
@@ -1141,6 +1236,9 @@ async function buildAsk(prompt, shown, round = 0) {
     }
     out.textContent = p.prose || 'Done.';
     const res = await applyBuild(ops, shown || prompt);
+    if (res.files.some(f => /\.bib$/i.test(f.path))) await refreshRefs();
+    const loose = unverifiedRefs(res, found);
+    if (loose.length) aiSay('ai-note warn', `Check ${loose.length === 1 ? 'this reference' : 'these references'}: ${loose.join(', ')}. The AI wrote ${loose.length === 1 ? 'it' : 'them'} from memory, not from a search, so the details may be wrong or the paper may not exist.`);
     out.appendChild(changeCard(res)); out.scrollIntoView({ block: 'end' });
     if (!res.files.length) return;
     await compileAndWait();

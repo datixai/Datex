@@ -34,7 +34,29 @@ Rules:
 - Never invent references. Cite only keys that exist in the project's .bib files. If a reference is needed and missing, write the text without \\cite and say so.
 - Do not include image files that are not in the file list. Draw with TikZ, or leave a framed placeholder box.
 - Do not invent results, numbers or data. Where the user must supply facts, write a clear placeholder such as [TODO: add result].
+- When the request needs published work that is not in the project's .bib files (related work, a literature review, "find papers", "add citations"), do not cite from memory. Reply with only one to three lines of the form
+ARXIV: a few search words
+and nothing else. Datex searches arXiv and sends you the papers it finds. Then cite only those papers or keys already in the project, and add the BibTeX of every paper you cite to the project's .bib file with an empty SEARCH block. Use ARXIV at most once per request.
+- When pictures are attached, turn what they show (handwritten or printed equations, tables, diagrams, notes) into LaTeX and put it where the user asks, or at the cursor if they do not say. Draw diagrams with TikZ.
 - If the user only asks a question, answer in plain words with no edit blocks.`;
+
+// Literature searches the model asked for (lines "ARXIV: words"), three at most.
+export function parseSearches(text) {
+  const out = [];
+  for (const m of String(text).matchAll(/^\s*\**ARXIV\**\s*:\s*\**\s*(.+?)\s*\**\s*$/gim)) {
+    const q = m[1].replace(/^["'`]|["'`]$/g, '').trim();
+    if (q && !out.includes(q)) out.push(q);
+  }
+  return out.slice(0, 3);
+}
+
+// The search results as the model reads them: what each paper is, and the BibTeX to add if cited.
+export function papersMessage(papers, bibFile) {
+  if (!papers.length) return 'arXiv returned no papers for those searches. Carry out the request without new citations: do not invent any, and say in your first sentence that no papers were found.';
+  return 'Papers found on arXiv:\n\n' + papers.map(p =>
+    `[${p.key}] ${p.title}\n${p.authors.slice(0, 4).join(', ')}${p.authors.length > 4 ? ' et al.' : ''} (${p.year})\nAbstract: ${p.summary.slice(0, 450)}\nBibTeX:\n${p.bibtex}`).join('\n\n') +
+    `\n\nNow carry out the request with edit blocks. Cite only these papers (by the key in square brackets) or keys already in the project, and only papers that really fit. Describe each paper only by what its abstract says. Add the BibTeX of every paper you cite to ${bibFile || 'references.bib'} with an empty SEARCH block${bibFile ? '' : ', and make sure the main file loads that bibliography'}. Do not use ARXIV again.`;
+}
 
 const RE_FILE = /^\s*(?:#{1,6}\s*)?\**\s*FILE\s*:\s*\**\s*`?([^`*\r\n]+?)`?\s*\**\s*$/i;
 const RE_SEARCH = /^\s*<{3,}\s*SEARCH\s*$/i;
@@ -209,11 +231,11 @@ function bibKeys(text) {
 
 // The project as the model sees it: the file list, then the files, most relevant first, within a
 // size budget. Files that do not fit are shortened and marked, so the model does not rewrite them.
-export function buildContext({ files, main, active, selection, issues = [], budget = 60000 }) {
+export function buildContext({ files, main, active, selection, cursorLine, issues = [], budget = 60000 }) {
   const rank = f => f.path === main ? 0 : f.path === active ? 1 : /\.tex$/i.test(f.path) ? 2 : /\.bib$/i.test(f.path) ? 3 : 4;
   const sorted = [...files].sort((x, y) => rank(x) - rank(y) || x.path.localeCompare(y.path));
   const parts = [`Project files: ${files.map(f => f.path).join(', ') || '(none)'}`, `Main file (the one that is compiled): ${main}`];
-  if (active) parts.push(`File open in the editor: ${active}`);
+  if (active) parts.push(`File open in the editor: ${active}${cursorLine ? ` (the cursor is at line ${cursorLine})` : ''}`);
   let left = budget;
   for (const f of sorted) {
     let body = f.text.replace(/\r\n/g, '\n'), note = '';
