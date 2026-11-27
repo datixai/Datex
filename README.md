@@ -14,6 +14,8 @@ Developed by **Datix AI** · [datixai.com](https://datixai.com)
 | Overleaf paid-tier features | Auto compile while typing, no compile time limit, full project history with labelled versions, compare and restore, track changes (accept or reject each change), comments with replies and resolve, Git and GitHub sync, Zotero import, add references by DOI, advanced reference search, symbol palette, templates |
 | Word export | One click turns the LaTeX project into an editable Word document (.docx) for people who do not use LaTeX: cover, contents, chapters on new pages, numbered figures and tables, working cross references, editable Word equations, citations and the reference list, with a Page X of Y footer. Can update the Word file after every compile. Uses the bundled Pandoc |
 | Live co-editing | Share button starts a session on the office network; others join with the address and code. Everyone edits the same files at once with coloured cursors, presence and synced comments, and each PC compiles its own PDF |
+| AI Build chat (local) | Type what you want in the prompt box under the editor (Ctrl+K) or in the AI panel, and the AI changes the project itself: it reads every project file, writes or edits sections, tables, equations and new files, then compiles and corrects its own compile errors. Each answer lists the files it changed with Review (accept or reject each change) and Undo all, and a version from before is saved in History. "Build with AI" on the Dashboard starts a new project from a description |
+| AI: local or cloud | The AI runs on local Ollama models by default, so documents never leave the PC. In the AI panel you can switch to Claude (cloud) with your own Anthropic API key for faster and more accurate results; each request then sends the text of the project files to Anthropic. The key is stored encrypted on the PC |
 | AI (local) | Fix compile errors, improve writing, fix grammar, shorten, explain, make tables, equations and TikZ diagrams, draft an abstract, suggest titles, translate. Runs with local Ollama models, so documents never leave the PC |
 
 Templates: Blank, Article, Report, Thesis (multi-file), IEEE Conference, Presentation (Beamer), CV, Letter.
@@ -39,6 +41,7 @@ This runs the tests, downloads the Tectonic engine into `bin/`, pre-fills `tex-c
 - `preload.js`: safe bridge to the window
 - `lib/`: LaTeX log parser, BibTeX reader, SyncTeX reader (tested in `tests/`)
 - `renderer/`: the window (`index.html`, `styles.css`, `app.js`, `data.js`)
+- `renderer/aibuild.js`: the AI Build chat engine (project context, edit blocks, applying edits; tested in `tests/aibuild.test.mjs`)
 - `templates/`: new project templates
 - `templates/word/`: Word export template, filter and numbered citation style
 - `tools/`: engine and Pandoc download, package cache and Word template scripts
