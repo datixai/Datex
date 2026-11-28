@@ -74,6 +74,11 @@ function createWindow() {
 function selfTest() {
   const wc = win.webContents;
   wc.on('console-message', (e) => console.log('[renderer]', e.level, e.message));
+  // A self-test script can save pictures of the window as it goes: datex.call('selftest:shot', 'name').
+  handle('selftest:shot', async (name) => {
+    const f = path.join(path.dirname(process.env.DATEX_SHOT || path.join(app.getPath('temp'), 'x.png')), String(name).replace(/[^\w-]/g, '') + '.png');
+    fs.writeFileSync(f, (await wc.capturePage()).toPNG()); return f;
+  });
   const t0 = Date.now(), at = () => Math.round((Date.now() - t0) / 1000) + 's';
   wc.on('render-process-gone', (_e, d) => console.log('[gone] window', at(), JSON.stringify(d)));
   app.on('child-process-gone', (_e, d) => console.log('[gone] child', at(), JSON.stringify(d)));
@@ -146,10 +151,20 @@ function buildMenu() {
       { label: 'Clone from GitHub...', click: cmd('cloneRepo') },
       { label: 'TeX Packages...', click: cmd('packages') }
     ] },
-    { label: 'View', submenu: [{ role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'resetZoom' }, { role: 'togglefullscreen' }] },
+    { label: 'View', submenu: [
+      { label: 'Split View (editor and PDF)', click: cmd('layoutSplit') },
+      { label: 'Editor Only', click: cmd('layoutEditor') },
+      { label: 'PDF Only', click: cmd('layoutPdf') },
+      { label: 'Open PDF in Separate Window', click: cmd('pdfWindow') },
+      { label: 'Focus Mode', accelerator: 'Ctrl+Shift+M', click: cmd('focusMode') },
+      { label: 'Code / Visual Editor', accelerator: 'Ctrl+Shift+V', click: cmd('toggleVisual') },
+      { type: 'separator' },
+      { role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'resetZoom' }, { role: 'togglefullscreen' }] },
     { label: 'Help', submenu: [
-      { label: 'LaTeX Quick Guide', click: cmd('guide') },
-      { label: 'Visit datixai.com', click: () => shell.openExternal('https://datixai.com') },
+      { label: 'Keyboard Shortcuts', accelerator: 'F1', click: cmd('shortcuts') },
+      { label: 'Documentation (LaTeX Quick Guide)', click: cmd('guide') },
+      { label: 'Contact Us', click: () => shell.openExternal('https://datixai.com') },
+      { type: 'separator' },
       { label: 'Check for Updates...', click: cmd('checkUpdates') },
       { label: 'About Datex', click: cmd('about') }
     ] }
@@ -941,6 +956,34 @@ handle('word:toLatex', async (docx, intoRoot) => {
   if (!intoRoot) await saveProjectConfig(dir, { ...(await projectConfig(dir)), main: tex, engine: 'auto' });
   return { dir, tex, images: fs.existsSync(path.join(dir, media)) ? (await fsp.readdir(path.join(dir, media))).length : 0, warnings, newProject: !intoRoot };
 });
+// ---------- PDF in its own window (Layout > Open PDF in separate window) ----------
+let pdfWin = null;
+handle('pdf:window', async (file) => {
+  if (!file || !fs.existsSync(file)) throw new Error('There is no PDF yet. Click Recompile first.');
+  const url = pathToFileURL(file).toString() + '#view=FitH';
+  if (pdfWin && !pdfWin.isDestroyed()) { await pdfWin.loadURL(url); pdfWin.show(); pdfWin.focus(); return true; }
+  pdfWin = new BrowserWindow({ width: 900, height: 1000, title: 'Datex PDF', backgroundColor: '#333333', autoHideMenuBar: true, icon: path.join(APP_DIR, 'build', 'icon.png'), webPreferences: { plugins: true, contextIsolation: true, nodeIntegration: false } });
+  pdfWin.setMenu(null);
+  pdfWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  pdfWin.on('closed', () => { pdfWin = null; });
+  await pdfWin.loadURL(url);
+  return true;
+});
+// After a compile: show the new PDF in the separate window, if that window is open.
+handle('pdf:windowRefresh', async (file) => {
+  if (!pdfWin || pdfWin.isDestroyed() || !file || !fs.existsSync(file)) return false;
+  pdfWin.webContents.reloadIgnoringCache();
+  return true;
+});
+// Share dialog: open the user's email program with an invitation ready to send.
+handle('share:invite', async (emails, subject, body) => {
+  const list = [...new Set(String(emails || '').split(/[,;\s]+/).map(s => s.trim()).filter(Boolean))];
+  const bad = list.filter(e => !/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(e));
+  if (!list.length) throw new Error('Enter at least one email address.');
+  if (bad.length) throw new Error('This does not look like an email address: ' + bad[0]);
+  await shell.openExternal('mailto:' + list.map(encodeURIComponent).join(',') + '?subject=' + encodeURIComponent(String(subject || '').slice(0, 200)) + '&body=' + encodeURIComponent(String(body || '').slice(0, 1800)));
+  return list.length;
+});
 handle('file:open', async (f) => { const e = await shell.openPath(f); if (e) throw new Error(e); });
 handle('file:reveal', async (f) => shell.showItemInFolder(f));
 
@@ -1122,4 +1165,6 @@ app.whenReady().then(() => {
     setInterval(checkUpdates, 6 * 60 * 60 * 1000);
   }
 });
+// Closing the main window closes the separate PDF window with it.
+app.on('browser-window-created', (_e, w) => w.on('closed', () => { if (w === win && pdfWin && !pdfWin.isDestroyed()) pdfWin.close(); }));
 app.on('window-all-closed', () => { if (relay) relay.close(); for (const r of running.keys()) stopCompile(r); app.quit(); });

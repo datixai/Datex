@@ -69,7 +69,9 @@
     <button class="tool-btn" data-panel="search" title="Search project">Search</button>
     <button class="tool-btn" data-panel="git" title="Git and GitHub sync">Git</button>
     <span id="peerDots" class="peer-dots"></span>
-    <button class="tool-btn share" data-panel="share" title="Share by email, Google Drive, OneDrive, Dropbox, WhatsApp">Share</button>
+    <button class="tool-btn" id="layoutBtn" data-cmd="layoutMenu" title="Layout: split view, editor only, PDF only, separate PDF window, focus mode">&#9707; Layout</button>
+    <button class="tool-btn share" data-cmd="shareDialog" title="Share: invite people to edit with you, or send a copy">Share</button>
+    <button class="tool-btn" id="helpBtn" data-cmd="helpMenu" title="Help: keyboard shortcuts, documentation, contact us">Help</button>
     <button class="icon-btn theme-btn" data-cmd="toggleTheme" title="Switch light / dark mode"></button>
     <button class="icon-btn" data-cmd="settings" title="Settings">&#9881;</button>
   </header>
@@ -126,6 +128,7 @@
   </div>
 </section>
 
+<button id="focusExit" class="focus-exit hidden" data-cmd="focusMode" title="Leave focus mode (Ctrl+Shift+M or Esc)">Exit focus mode</button>
 <div id="modal" class="modal hidden"><div class="modal-card" id="modalCard"></div></div>
 <div id="toast" class="toast hidden"></div>
 

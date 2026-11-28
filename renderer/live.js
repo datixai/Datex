@@ -18,6 +18,12 @@ export function initLive(c) {
   ctx.editor.onDidChangeCursorSelection(() => sendCursor());
 }
 export const isActive = () => !!session;
+// For the Share dialog: the running session (who is in it, and what to give people who join), or null.
+export function status() {
+  if (!session) return null;
+  return { role, addresses: info.addresses || [], port: info.port, code: info.code, addr: info.addr, peers: session.peers() };
+}
+export async function host() { if (!session) await startHosting(); return status(); }
 
 function me() {
   const name = ctx.settings().userName && ctx.settings().userName !== 'Me' ? ctx.settings().userName : 'User ' + Math.floor(Math.random() * 90 + 10);

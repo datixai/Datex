@@ -4,6 +4,7 @@ import { LATEX_COMMANDS, ENVIRONMENTS, SYMBOLS, AI_ACTIONS } from './data.js';
 import * as live from './live.js';
 import { BUILD_SYS, EDITABLE, parseSearches, papersMessage, parseEdits, applyOps, progress, wholeDocument, minimalEdit, buildContext, contextTokens } from './aibuild.js';
 import { starfield } from './stars.js';
+import { documentMarks } from './visual.js';
 const splashStart = performance.now();
 const stopSplashStars = starfield(document.querySelector('#splash .sky'), { density: 0.00028 });
 
@@ -228,6 +229,11 @@ const FMT = [
 ];
 function buildFmtBar() {
   const bar = document.createElement('div'); bar.className = 'fmtbar';
+  // Code shows the LaTeX source as typed; Visual shows the same text the way it reads.
+  const seg = document.createElement('div'); seg.className = 'seg mode'; seg.id = 'modeSeg';
+  seg.innerHTML = '<button data-m="code" title="Code editor: the LaTeX source as typed (Ctrl+Shift+V)">Code</button><button data-m="visual" title="Visual editor: headings, bold, lists and citations shown as they read. The line you are on shows its code. (Ctrl+Shift+V)">Visual</button>';
+  seg.onclick = e => { if (e.target.dataset.m) setEditorMode(e.target.dataset.m); };
+  bar.appendChild(seg);
   for (const [label, title, fn] of FMT) {
     if (label === '|') { const s = document.createElement('span'); s.className = 'sep'; bar.appendChild(s); continue; }
     const b = document.createElement('button'); b.className = 'fmt'; b.textContent = label; b.title = title; b.onclick = fn; bar.appendChild(b);
@@ -632,6 +638,7 @@ async function loadPdf(file) {
   const doc = await pdfjsLib.getDocument({ data: bytes }).promise;
   if (S.pdf) S.pdf.destroy();
   S.pdf = doc; S.pdfPath = file;
+  api('pdf:windowRefresh', file).catch(() => {}); // the separate PDF window, when it is open
   await renderPdf();
 }
 async function renderPdf() {
@@ -1409,7 +1416,7 @@ async function settingsDialog() {
     settings = await api('settings:set', { userName: c.querySelector('#stName').value || 'Me', projectsDir: c.querySelector('#stDir').value, theme: c.querySelector('#stTheme').value,
       fontSize: +c.querySelector('#stFont').value || 14, engine: c.querySelector('#stEngine').value, compileTimeout: +c.querySelector('#stTime').value || 0,
       autoCompile: c.querySelector('#stAuto').checked, wordWrap: c.querySelector('#stWrap').checked, spellcheck: c.querySelector('#stSpell').checked, autoUpdate: c.querySelector('#stUpd').checked, spellLang: c.querySelector('#stLang').value, ollamaUrl: c.querySelector('#stOllama').value });
-    applyTheme(); editor.updateOptions({ fontSize: settings.fontSize, wordWrap: settings.wordWrap ? 'on' : 'off' });
+    applyTheme(); applyEditorMode();
     $('#autoChk').checked = settings.autoCompile; spellBad = {}; spellCheck(); closeModal(); toast('Settings saved');
     if (!S.root) renderProjects();
   };
@@ -1526,6 +1533,147 @@ $x^2 + y_1$               Inline math
   c.querySelector('#gdOk').onclick = closeModal;
 }
 
+// ---------------- Layout, focus mode, Help ----------------
+// A drop-down under a toolbar button. Items: { label, fn, on (tick mark), key (shortcut text) } or '-'.
+function menuAt(btn, items) {
+  document.querySelector('.ctx')?.remove();
+  const r = btn.getBoundingClientRect();
+  const m = document.createElement('div'); m.className = 'ctx';
+  for (const it of items) {
+    const d = document.createElement('div');
+    if (it === '-') { d.className = 'line'; m.appendChild(d); continue; }
+    d.textContent = it.label; if (it.on !== undefined) d.className = it.on ? 'on' : 'off';
+    if (it.key) { const s = document.createElement('small'); s.textContent = it.key; d.appendChild(s); }
+    d.onclick = () => { m.remove(); it.fn(); };
+    m.appendChild(d);
+  }
+  document.body.appendChild(m);
+  m.style.top = r.bottom + 4 + 'px'; m.style.left = Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8)) + 'px';
+  setTimeout(() => document.addEventListener('click', () => m.remove(), { once: true }), 0);
+}
+// Layout: 'split' (editor and PDF side by side), 'editor' (editor only) or 'pdf' (PDF only).
+function setLayout(mode, save = true) {
+  S.layout = mode;
+  const w = $('#workspace'); w.classList.toggle('lay-editor', mode === 'editor'); w.classList.toggle('lay-pdf', mode === 'pdf');
+  if (save) api('settings:set', { layout: mode }).then(s => settings = s);
+  if (mode !== 'editor' && S.pdf && S.zoom === 'fit') setTimeout(renderPdf, 80);
+  if (mode !== 'pdf') setTimeout(() => editor.focus(), 0);
+}
+// Focus mode: nothing on screen but the text. Ctrl+Shift+M or Esc leaves it.
+function focusMode(on = !document.body.classList.contains('focus')) {
+  if (on && !S.root) return;
+  document.body.classList.toggle('focus', on); $('#focusExit').classList.toggle('hidden', !on);
+  if (on) { closePanel(); editor.focus(); } else if (S.pdf && S.zoom === 'fit') setTimeout(renderPdf, 80);
+}
+async function pdfWindow() {
+  if (!S.pdfPath) return toast('Compile first');
+  try { await api('pdf:window', S.pdfPath); toast('The PDF is open in its own window. It updates after each compile.'); } catch (e) { toast(e.message, true); }
+}
+function layoutMenu() {
+  const L = S.layout || 'split';
+  menuAt($('#layoutBtn'), [
+    { label: 'Split view', on: L === 'split', fn: () => setLayout('split') },
+    { label: 'Editor only', on: L === 'editor', fn: () => setLayout('editor') },
+    { label: 'PDF only', on: L === 'pdf', fn: () => setLayout('pdf') },
+    { label: 'Open PDF in separate window', on: false, fn: pdfWindow },
+    '-',
+    { label: 'Focus mode', on: false, key: 'Ctrl Shift M', fn: () => focusMode(true) }
+  ]);
+}
+function helpMenu() {
+  menuAt($('#helpBtn'), [
+    { label: 'Keyboard shortcuts', key: 'F1', fn: shortcutsDialog },
+    { label: 'Documentation', fn: guideDialog },
+    '-',
+    { label: 'Contact us', fn: () => api('shell:open', 'https://datixai.com') }
+  ]);
+}
+const SHORTCUTS = [
+  ['Document', [['Ctrl+Enter', 'Recompile'], ['Ctrl+S', 'Save and recompile'], ['Ctrl+Alt+J', 'Jump from the code to the PDF'], ['Double-click the PDF', 'Jump from the PDF to the code'], ['Ctrl+Shift+E', 'Export PDF'], ['Ctrl+Shift+W', 'Export Word document']]],
+  ['Editing', [['Ctrl+B', 'Bold'], ['Ctrl+I', 'Italic'], ['Ctrl+/', 'Comment or uncomment lines'], ['Ctrl+Z / Ctrl+Y', 'Undo / redo'], ['Ctrl+F', 'Find'], ['Ctrl+H', 'Find and replace'], ['Ctrl+Shift+F', 'Find in the whole project'], ['Ctrl+D', 'Select the next match of the selected word'], ['Alt+Up / Alt+Down', 'Move the line up or down'], ['Ctrl+Space', 'Show suggestions']]],
+  ['AI', [['Ctrl+K', 'Ask AI to build or change the document'], ['Ctrl+Shift+A', 'Open the AI assistant'], ['Ctrl+Enter (in the AI box)', 'Send']]],
+  ['View', [['Ctrl+Shift+V', 'Switch between Code and Visual editor'], ['Ctrl+Shift+M', 'Focus mode'], ['Esc', 'Leave focus mode, close a dialog'], ['Ctrl+Shift+L', 'Light or dark mode'], ['Ctrl+Mouse wheel on the PDF', 'Zoom the PDF'], ['F11', 'Full screen']]],
+  ['Panels and project', [['Ctrl+Shift+R', 'Track changes'], ['Ctrl+Shift+B', 'References'], ['Ctrl+Shift+N', 'New project'], ['Ctrl+Shift+O', 'Open a project folder'], ['Ctrl+Shift+D', 'Project dashboard'], ['Ctrl+,', 'Settings'], ['F1', 'This list']]]
+];
+function shortcutsDialog() {
+  const c = modal(`<h2>Keyboard shortcuts</h2><input id="kbQ" placeholder="Search shortcuts..." style="width:100%;margin-bottom:6px">
+    <div style="max-height:60vh;overflow:auto"><table class="keys">${SHORTCUTS.map(([g, rows]) => `<tbody><tr><th colspan="2">${esc(g)}</th></tr>${rows.map(([k, d]) => `<tr><td>${k.split(' / ').map(x => `<kbd>${esc(x)}</kbd>`).join(' ')}</td><td>${esc(d)}</td></tr>`).join('')}</tbody>`).join('')}</table></div>
+    <div class="modal-actions"><button class="btn primary" id="kbOk">Close</button></div>`);
+  c.style.width = '620px';
+  c.querySelector('#kbOk').onclick = closeModal;
+  const q = c.querySelector('#kbQ'); q.focus();
+  q.oninput = () => { const w = q.value.toLowerCase(); c.querySelectorAll('.keys tbody').forEach(tb => { let any = false; tb.querySelectorAll('tr').forEach((tr, i) => { if (!i) return; const hit = tr.textContent.toLowerCase().includes(w); tr.style.display = hit ? '' : 'none'; any = any || hit; }); tb.style.display = any ? '' : 'none'; }); };
+}
+
+// ---------------- Share dialog ----------------
+// Datex has no server: people edit together through a live session between PCs on the same
+// network, and anyone else gets a copy (PDF, Word or ZIP). This dialog puts both in one place.
+function shareDetails(st) {
+  const where = st.role === 'host' ? st.addresses.map(a => a + ':' + st.port).join(' or ') : st.addr;
+  return { where, text: `Datex live session for "${S.name}"\nAddress: ${where}\nCode: ${st.code || '(ask the host)'}` };
+}
+function shareDialog() {
+  const st = live.status();
+  const d = st ? shareDetails(st) : null;
+  const c = modal(`<h2>Share ${esc(S.name)}</h2>
+    <label>Enter emails separated by commas</label>
+    <div class="row"><input id="shEmails" placeholder="name@example.com, colleague@example.com"><button class="btn primary" id="shInvite">Invite</button></div>
+    <div class="share-state">${st ? `<b>Live sharing is on</b> &nbsp; <a href="#" id="shOff">${st.role === 'host' ? 'Turn off live sharing' : 'Leave the session'}</a>` : '<b>Live sharing is off</b> &nbsp; <a href="#" id="shOn">Turn on live sharing</a>'}</div>
+    ${st ? `<div class="share-box"><div class="muted small">People join in Datex with <b>Join Live Session</b> on the Dashboard, using:</div><div style="margin-top:6px">Address: <b class="mono">${esc(d.where || 'No network found')}</b></div>${st.code ? `<div>Code: <b class="mono" style="font-size:16px;letter-spacing:2px">${esc(st.code)}</b></div>` : ''}</div>` : ''}
+    <div class="sym-cat">Project access</div>
+    <div class="share-people">${st ? st.peers.map(p => `<div class="row"><span class="peer-dot c${p.color}">${esc(p.name.slice(0, 1).toUpperCase())}</span> ${esc(p.name)}${p.self ? ' <span class="muted">(you)</span>' : ''}</div>`).join('') : '<div class="row muted">&#128101; No one invited yet</div>'}</div>
+    <div class="row" style="margin-top:6px">&#128274; <b>Only people with the session code</b></div>
+    <p class="muted small">Live sharing works between PCs on the same network (office or home Wi-Fi); each person needs Datex. For anyone else, send a copy.</p>
+    <div class="modal-actions"><button class="btn ghost" id="shCopy"${st ? '' : ' disabled'}>Copy sharing details</button><button class="btn" id="shSend">Send a copy (PDF, Word, ZIP)</button><button class="btn primary" id="shClose">Close</button></div>`);
+  c.style.width = '600px';
+  const on = async () => { try { await live.host(); } catch (e) { toast(e.message, true); return null; } return live.status(); };
+  c.querySelector('#shClose').onclick = closeModal;
+  c.querySelector('#shSend').onclick = () => { closeModal(); if (S.panel !== 'share') openPanel('share'); };
+  c.querySelector('#shCopy').onclick = () => navigator.clipboard.writeText(d.text).then(() => toast('Sharing details copied'));
+  c.querySelector('#shOn')?.addEventListener('click', async e => { e.preventDefault(); if (await on()) shareDialog(); });
+  c.querySelector('#shOff')?.addEventListener('click', async e => { e.preventDefault(); await live.end(); shareDialog(); });
+  const invite = async () => {
+    const emails = c.querySelector('#shEmails').value.trim();
+    if (!emails) return toast('Enter at least one email address', true);
+    const now = live.status() || await on(); if (!now) return;
+    const info = shareDetails(now), me = settings.userName && settings.userName !== 'Me' ? settings.userName : 'A colleague';
+    const body = `${me} invited you to edit the project "${S.name}" together in Datex.\n\nHow to join:\n1. Open Datex on a PC on the same network.\n2. On the Dashboard, click "Join Live Session".\n3. Address: ${info.where}\n4. Code: ${now.code || '(ask the host)'}\n\nThe session stays open while ${me}'s Datex is running.`;
+    try { const n = await api('share:invite', emails, `Invitation to edit "${S.name}" in Datex`, body); toast(`Your email program opened with the invitation for ${n} ${n === 1 ? 'person' : 'people'}. Press Send there.`); shareDialog(); }
+    catch (e) { toast(e.message, true); }
+  };
+  c.querySelector('#shInvite').onclick = invite;
+  c.querySelector('#shEmails').onkeydown = e => { if (e.key === 'Enter') invite(); };
+}
+
+// ---------------- Code / Visual editor ----------------
+// Visual shows the same LaTeX text the way it reads: headings look like headings, bold is bold,
+// \item is a bullet, \cite is a small tag. Nothing in the file changes, and the line with the
+// cursor always shows its real code, so everything stays editable.
+let vzMarks = null, vzLine = 0;
+const isVisual = () => settings.editorMode === 'visual';
+function applyEditorMode() {
+  const v = isVisual(), size = settings.fontSize || 14;
+  editor.updateOptions(v
+    ? { fontFamily: 'Georgia, Cambria, "Times New Roman", serif', fontSize: size + 2, lineHeight: Math.round((size + 2) * 1.65), lineNumbers: 'off', minimap: { enabled: false }, wordWrap: 'on', wrappingStrategy: 'advanced', glyphMargin: false, folding: false, renderLineHighlight: 'none', padding: { top: 14 } }
+    : { fontFamily: 'Cascadia Code, Consolas, monospace', fontSize: size, lineHeight: 0, lineNumbers: 'on', minimap: { enabled: true, renderCharacters: false }, wordWrap: settings.wordWrap ? 'on' : 'off', wrappingStrategy: 'simple', glyphMargin: true, folding: true, renderLineHighlight: 'line', padding: { top: 0 } });
+  document.querySelectorAll('#modeSeg button').forEach(b => b.classList.toggle('on', (b.dataset.m === 'visual') === v));
+  drawVisual();
+}
+function drawVisual() {
+  if (vzMarks) { vzMarks.clear(); vzMarks = null; }
+  const m = editor.getModel();
+  if (!isVisual() || !m || m.getLanguageId() !== 'latex' || m.getLineCount() > 8000) return;
+  vzLine = editor.getPosition()?.lineNumber || 0;
+  const R = monaco.Range, list = [];
+  for (const k of documentMarks(m.getLinesContent(), vzLine)) {
+    if (k.kind === 'bullet') list.push({ range: new R(k.line, k.start + 1, k.line, k.start + 1), options: { before: { content: '•', inlineClassName: 'vz-bullet' } } });
+    else list.push({ range: new R(k.line, k.start + 1, k.line, k.end + 1), options: { inlineClassName: k.kind === 'hide' ? 'vz-hide' : k.cls } });
+  }
+  vzMarks = editor.createDecorationsCollection(list);
+}
+const drawVisualSoon = debounce(drawVisual, 120);
+async function setEditorMode(mode) { settings = await api('settings:set', { editorMode: mode }); applyEditorMode(); editor.focus(); }
+
 // ---------------- Commands & wiring ----------------
 const CMDS = {
   newProject, exportWord: () => exportWord(false), wordMenu: () => wordMenu(), wordToLatex: () => wordToLatex(null, null), exportWordAs: () => exportWord(true), joinSession: () => live.joinDialog(), packages: () => packagesDialog(), cloneRepo: () => cloneRepo(), openProject: openFolder, importZip: () => importZip(), dashboard: showDashboard, settings: settingsDialog, about: aboutDialog, liveSession: () => S.root ? openPanel('live') : toast('Open a project first'), toggleTheme: async () => { settings = await api('settings:set', { theme: isDark() ? 'light' : 'dark' }); applyTheme(); }, checkUpdates: () => { aboutDialog.check = true; aboutDialog(); }, guide: guideDialog,
@@ -1536,9 +1684,12 @@ const CMDS = {
   exportZip: async () => { if (!S.root) return; await saveAll(); const p = await api('project:zip', S.root); if (p) toast('Saved ' + p); },
   newFile: () => newFile(), newFolder, upload, refreshTree: () => refreshTree(),
   review: () => openPanel('review'), comments: () => openPanel('comments'), history: () => openPanel('history'), refs: () => openPanel('refs'),
+  layoutMenu, helpMenu, shareDialog, shortcuts: shortcutsDialog, pdfWindow, focusMode: () => focusMode(),
+  layoutSplit: () => setLayout('split'), layoutEditor: () => setLayout('editor'), layoutPdf: () => setLayout('pdf'),
+  toggleVisual: () => setEditorMode(isVisual() ? 'code' : 'visual'),
   ai: () => openPanel('ai'), aiPrompt: () => $('#promptIn').focus(), aiNewProject: async () => { if (S.root) await showDashboard(); aiNewProject(); }, symbols: () => openPanel('symbols'), git: () => openPanel('git'), search: () => openPanel('search'), wordcount: wordCountDialog
 };
-const needsProject = new Set(['exportWord', 'exportWordAs', 'save', 'compile', 'stop', 'clean', 'syncForward', 'exportPdf', 'exportZip', 'review', 'comments', 'history', 'refs', 'ai', 'aiPrompt', 'symbols', 'git', 'search', 'wordcount', 'newFile', 'newFolder', 'upload']);
+const needsProject = new Set(['exportWord', 'exportWordAs', 'save', 'compile', 'stop', 'clean', 'syncForward', 'exportPdf', 'exportZip', 'review', 'comments', 'history', 'refs', 'ai', 'aiPrompt', 'layoutMenu', 'shareDialog', 'pdfWindow', 'focusMode', 'layoutSplit', 'layoutEditor', 'layoutPdf', 'toggleVisual', 'symbols', 'git', 'search', 'wordcount', 'newFile', 'newFolder', 'upload']);
 function runCmd(c) { if (needsProject.has(c) && !S.root) return toast('Open a project first'); CMDS[c] && CMDS[c](); }
 
 function wire() {
@@ -1555,7 +1706,11 @@ function wire() {
   $('#promptGo').onclick = sendPromptBar;
   $('#promptIn').onkeydown = e => { if (e.key === 'Enter') sendPromptBar(); else if (e.key === 'Escape') editor.focus(); };
   $('#modal').onclick = e => { if (e.target.id === 'modal') closeModal(); };
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#modal').classList.contains('hidden')) closeModal(); });
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    if (!$('#modal').classList.contains('hidden')) closeModal();
+    else if (document.body.classList.contains('focus')) focusMode(false);
+  });
   $('#tabs').onclick = e => { const x = e.target.dataset.x; if (x) return closeTab(x); const t = e.target.closest('.tab'); if (t) openFile(t.dataset.p); };
   $('#tabs').onauxclick = e => { const t = e.target.closest('.tab'); if (t && e.button === 1) closeTab(t.dataset.p); };
   $('#mainSel').onchange = e => setMain(e.target.value);
@@ -1591,6 +1746,10 @@ async function main() {
   applyTheme();
   monaco = await loadMonaco();
   setupLanguages(); createEditor(); buildFmtBar(); applyTheme(); wire();
+  applyEditorMode(); setLayout(settings.layout || 'split', false);
+  editor.onDidChangeModel(() => drawVisual());
+  editor.onDidChangeModelContent(() => { if (isVisual()) drawVisualSoon(); });
+  editor.onDidChangeCursorPosition(e => { if (isVisual() && e.position.lineNumber !== vzLine) drawVisualSoon(); });
   live.initLive({ S, api, monaco, editor, toast, modal, closeModal, openProject, refreshTree, allFiles, saveAll, autosave, applyCommentDecorations, refreshPanel, TEXT_EXT, settings: () => settings });
   if (!tex.builtin && !tex.system) {
     const w = $('#texWarning'); w.classList.remove('hidden');
@@ -1600,5 +1759,5 @@ async function main() {
   // Keep the opening screen up long enough to read, then fade it out.
   setTimeout(() => { const sp = $('#splash'); sp.classList.add('out'); setTimeout(() => { sp.remove(); stopSplashStars(); }, 800); }, Math.max(0, 2600 - (performance.now() - splashStart)));
 }
-window.__datex = { S, openProject, compile, openFile, openPanel, syncForward, newProject, live, buildAsk, aiBusy: () => aiBusy };
+window.__datex = { S, openProject, compile, openFile, openPanel, syncForward, newProject, live, buildAsk, aiBusy: () => aiBusy, runCmd: c => runCmd(c), editor: () => editor };
 main().catch(e => { document.body.innerHTML = '<pre style="padding:20px;color:#f88">Datex failed to start:\n' + esc(e.stack || e.message) + '</pre>'; });
