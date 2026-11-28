@@ -2,10 +2,10 @@
   "name": "datex",
   "productName": "Datex",
   "version": "0.6.0",
-  "description": "Datex: a professional LaTeX editor for Windows. Developed by XactGen AI (xactgenai.com)",
+  "description": "Datex: a professional LaTeX editor for Windows. Developed by Datix AI (datixai.com) and XactGen AI (xactgenai.com)",
   "main": "main.js",
-  "author": "XactGen AI",
-  "homepage": "https://xactgenai.com",
+  "author": "Datix AI & XactGen AI",
+  "homepage": "https://datixai.com",
   "license": "UNLICENSED",
   "scripts": {
     "start": "electron .",

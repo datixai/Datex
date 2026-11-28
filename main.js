@@ -1,4 +1,4 @@
-// Datex main process. Developed by XactGen AI (xactgenai.com).
+// Datex main process. Developed by Datix AI (datixai.com) and XactGen AI (xactgenai.com).
 'use strict';
 const { app, BrowserWindow, ipcMain, dialog, shell, Menu, protocol, net, safeStorage } = require('electron');
 const path = require('path');
@@ -163,7 +163,7 @@ function buildMenu() {
     { label: 'Help', submenu: [
       { label: 'Keyboard Shortcuts', accelerator: 'F1', click: cmd('shortcuts') },
       { label: 'Documentation (LaTeX Quick Guide)', click: cmd('guide') },
-      { label: 'Contact Us', click: () => shell.openExternal('https://xactgenai.com') },
+      { label: 'Contact Us', click: cmd('contact') },
       { type: 'separator' },
       { label: 'Check for Updates...', click: cmd('checkUpdates') },
       { label: 'About Datex', click: cmd('about') }
