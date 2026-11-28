@@ -2,7 +2,7 @@
 
 A complete LaTeX writing studio for Windows 10 and 11. Editor, TeX engine, PDF viewer and Overleaf-style professional tools in one installable app.
 
-Developed by **Datix AI** · [datixai.com](https://datixai.com)
+Developed by **XactGen AI** · [xactgenai.com](https://xactgenai.com)
 
 ## What is inside
 

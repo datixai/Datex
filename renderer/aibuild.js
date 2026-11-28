@@ -5,7 +5,7 @@
 // Files the AI may read and change.
 export const EDITABLE = /\.(tex|bib|sty|cls|bst|txt|md|csv|dat|ltx|bbx|cbx|lbx)$/i;
 
-export const BUILD_SYS = `You are Datex AI, a LaTeX expert built into the Datex editor by Datix AI. You build and change the user's LaTeX project directly: you are given the project files and you answer with edits that Datex applies for the user.
+export const BUILD_SYS = `You are Datex AI, a LaTeX expert built into the Datex editor by XactGen AI. You build and change the user's LaTeX project directly: you are given the project files and you answer with edits that Datex applies for the user.
 
 Start with one or two plain sentences that say what you are changing. Then give the edits in exactly this format.
 

@@ -1,4 +1,4 @@
-// Datex renderer. Developed by Datix AI (datixai.com).
+// Datex renderer. Developed by XactGen AI (xactgenai.com).
 import * as pdfjsLib from '../node_modules/pdfjs-dist/build/pdf.mjs';
 import { LATEX_COMMANDS, ENVIRONMENTS, SYMBOLS, AI_ACTIONS } from './data.js';
 import * as live from './live.js';
@@ -912,7 +912,7 @@ function refsPanel(el) {
 // AI assistant using local models through Ollama.
 // Two modes. Build: the AI reads the whole project and changes the files itself (you can review
 // or undo every change). Ask: a plain chat that only answers; you insert what you want.
-const SYS = 'You are Datex AI, a LaTeX expert built into the Datex editor by Datix AI. Be concise and accurate. When you give LaTeX, put it in one ```latex code block. Never invent citations or references.';
+const SYS = 'You are Datex AI, a LaTeX expert built into the Datex editor by XactGen AI. Be concise and accurate. When you give LaTeX, put it in one ```latex code block. Never invent citations or references.';
 let aiHistory = [], buildHistory = [], aiBusy = false;
 // The conversation stays when the panel is closed or another panel is opened.
 const aiLogEl = document.createElement('div'); aiLogEl.id = 'aiLog'; aiLogEl.className = 'ai-log';
@@ -1496,7 +1496,7 @@ async function aboutDialog() {
   const info = await api('app:info');
   const c = modal(`<div class="about"><img src="assets/datex-icon.png" class="app-logo xl" alt=""><h2 style="margin:10px 0 2px">Datex</h2><div class="muted">Version ${esc(info.version)}</div>
     <p>A complete LaTeX writing studio for Windows: editor, TeX engine, PDF viewer, version history, track changes, references and local AI in one app.</p>
-    <a href="#" class="credit-big" data-link="https://datixai.com" style="margin:14px auto 0"><img src="assets/datix-mark.png" alt=""><span>Developed by <b>Datix AI</b></span><span class="credit-url">datixai.com</span></a>
+    <a href="#" class="credit-big" data-link="https://xactgenai.com" style="margin:14px auto 0"><img src="assets/datix-mark.png" alt=""><span>Developed by <b>XactGen AI</b></span><span class="credit-url">xactgenai.com</span></a>
     <div class="muted small" id="abUpd" style="margin-top:12px"></div>
     <div class="modal-actions" style="justify-content:center"><button class="btn" id="abChk">Check for updates</button><button class="btn primary" id="abOk">Close</button></div></div>`);
   c.querySelector('#abOk').onclick = closeModal;
@@ -1585,7 +1585,7 @@ function helpMenu() {
     { label: 'Keyboard shortcuts', key: 'F1', fn: shortcutsDialog },
     { label: 'Documentation', fn: guideDialog },
     '-',
-    { label: 'Contact us', fn: () => api('shell:open', 'https://datixai.com') }
+    { label: 'Contact us', fn: () => api('shell:open', 'https://xactgenai.com') }
   ]);
 }
 const SHORTCUTS = [
